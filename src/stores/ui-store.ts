@@ -1,6 +1,17 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { QueryResult } from "@/types";
+import { useProjectStore } from "@/stores/project-store";
+import { ProjectConnectionStatus } from "@/types";
+
+export function nextActiveTabAfterClose(openTabs: string[], closingPid: string, currentActive: string | null): string | null {
+  if (currentActive !== closingPid) return currentActive;
+  const idx = openTabs.indexOf(closingPid);
+  const remaining = openTabs.filter((pid) => pid !== closingPid);
+  if (remaining.length === 0) return null;
+  const prevIdx = Math.max(0, idx - 1);
+  return remaining[Math.min(prevIdx, remaining.length - 1)];
+}
 
 interface PinnedResult {
   columns: string[];
@@ -19,6 +30,9 @@ interface UIState {
   pinnedResult: PinnedResult | null;
   editorCollapsed: boolean;
   editorPosition: "top" | "right" | "bottom" | "left";
+  activeServerFp: string | null;
+  openDatabaseTabs: string[];
+  activeDatabaseTab: string | null;
 
   toggleTheme: () => void;
   setTheme: (theme: "light" | "dark") => void;
@@ -31,6 +45,10 @@ interface UIState {
   clearPinnedResult: () => void;
   toggleEditorCollapsed: () => void;
   cyclePanelPosition: () => void;
+  setActiveServerFp: (fp: string | null) => void;
+  openDatabaseTab: (projectId: string) => void;
+  closeDatabaseTab: (projectId: string) => void;
+  setActiveDatabaseTab: (projectId: string) => void;
 }
 
 const PANEL_POSITION_CYCLE = ["bottom", "right", "top", "left"] as const;
@@ -47,6 +65,9 @@ export const useUIStore = create<UIState>()(
     pinnedResult: null,
     editorCollapsed: false,
     editorPosition: "bottom",
+    activeServerFp: null,
+    openDatabaseTabs: [],
+    activeDatabaseTab: null,
 
     toggleTheme: () => {
       set((s) => {
@@ -110,5 +131,30 @@ export const useUIStore = create<UIState>()(
       const next = PANEL_POSITION_CYCLE[(PANEL_POSITION_CYCLE.indexOf(s.editorPosition) + 1) % PANEL_POSITION_CYCLE.length];
       s.editorPosition = next;
     }),
+
+    setActiveServerFp: (fp) => set({ activeServerFp: fp }),
+
+    setActiveDatabaseTab: (projectId) => set({ activeDatabaseTab: projectId }),
+
+    openDatabaseTab: (projectId) => {
+      set((s) => {
+        if (!s.openDatabaseTabs.includes(projectId)) s.openDatabaseTabs.push(projectId);
+        s.activeDatabaseTab = projectId;
+      });
+      const status = useProjectStore.getState().status[projectId];
+      if (status !== ProjectConnectionStatus.Connected && status !== ProjectConnectionStatus.Connecting) {
+        void useProjectStore.getState().connect(projectId);
+      }
+    },
+
+    closeDatabaseTab: (projectId) => {
+      const { openDatabaseTabs, activeDatabaseTab } = get();
+      const nextActive = nextActiveTabAfterClose(openDatabaseTabs, projectId, activeDatabaseTab);
+      set((s) => {
+        s.openDatabaseTabs = s.openDatabaseTabs.filter((pid) => pid !== projectId);
+        s.activeDatabaseTab = nextActive;
+      });
+      useProjectStore.setState((s) => ({ status: { ...s.status, [projectId]: ProjectConnectionStatus.Disconnected } }));
+    },
   })),
 );
