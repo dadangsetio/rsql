@@ -15,7 +15,8 @@ import {
 
 export function DatabaseTree({ projectId }: { projectId: string }) {
   const status = useProjectStore((s) => s.status[projectId]);
-  const schemas = useProjectStore((s) => s.schemas[projectId] || []);
+  const schemasRaw = useProjectStore((s) => s.schemas[projectId]);
+  const schemas = schemasRaw || [];
   const tables = useProjectStore((s) => s.tables);
   const columnDetails = useProjectStore((s) => s.columnDetails);
   const indexes = useProjectStore((s) => s.indexes);
@@ -27,7 +28,8 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
   const materializedViews = useProjectStore((s) => s.materializedViews);
   const functions = useProjectStore((s) => s.functions);
   const triggerFunctions = useProjectStore((s) => s.triggerFunctions);
-  const serverTablespaces = useProjectStore((s) => s.serverTablespaces[projectId] || []);
+  const serverTablespacesRaw = useProjectStore((s) => s.serverTablespaces[projectId]);
+  const serverTablespaces = serverTablespacesRaw || [];
   const connect = useProjectStore((s) => s.connect);
   const loadTables = useProjectStore((s) => s.loadTables);
   const loadColumns = useProjectStore((s) => s.loadColumns);
