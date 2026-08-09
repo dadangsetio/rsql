@@ -42,11 +42,16 @@ src-tauri/query_db/
 .env
 .env.local
 .env.*.local
-.claude-flow/data/
-.claude-flow/logs/
-.claude-flow/sessions/
 
 # Codex local configuration
 .codex/
-# Claude Flow runtime data
-# Environment variables
+
+# AI tool runtime/config (local machine state, not project source)
+.agents/
+.claude-flow/
+.mcp.json
+.swarm/
+graphify-out/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
