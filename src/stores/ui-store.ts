@@ -11,11 +11,14 @@ interface PinnedResult {
 interface UIState {
   theme: "light" | "dark";
   sidebarWidth: number;
-  editorHeight: number;
+  editorHeightVertical: number;
+  editorHeightHorizontal: number;
   connectionModalOpen: boolean;
   viewMode: "grid" | "record";
   selectedRow: number;
   pinnedResult: PinnedResult | null;
+  editorCollapsed: boolean;
+  editorPosition: "top" | "right" | "bottom" | "left";
 
   toggleTheme: () => void;
   setTheme: (theme: "light" | "dark") => void;
@@ -26,17 +29,24 @@ interface UIState {
   setSelectedRow: (row: number | ((prev: number) => number)) => void;
   pinResult: (result: QueryResult, label: string) => void;
   clearPinnedResult: () => void;
+  toggleEditorCollapsed: () => void;
+  cyclePanelPosition: () => void;
 }
 
+const PANEL_POSITION_CYCLE = ["bottom", "right", "top", "left"] as const;
+
 export const useUIStore = create<UIState>()(
-  immer((set) => ({
+  immer((set, get) => ({
     theme: "light",
     sidebarWidth: 280,
-    editorHeight: 50,
+    editorHeightVertical: 50,
+    editorHeightHorizontal: 50,
     connectionModalOpen: false,
     viewMode: "grid",
     selectedRow: 0,
     pinnedResult: null,
+    editorCollapsed: false,
+    editorPosition: "bottom",
 
     toggleTheme: () => {
       set((s) => {
@@ -65,13 +75,15 @@ export const useUIStore = create<UIState>()(
     },
 
     setEditorHeight: (delta) => {
-      const containerHeight = window.innerHeight - 48 - 24;
-      const deltaPercent = (delta / containerHeight) * 100;
+      const { editorPosition, sidebarWidth } = get();
+      const isHorizontal = editorPosition === "left" || editorPosition === "right";
+      const containerSize = isHorizontal
+        ? window.innerWidth - sidebarWidth
+        : window.innerHeight - 48 - 24;
+      const deltaPercent = (delta / containerSize) * 100;
       set((s) => {
-        s.editorHeight = Math.max(
-          20,
-          Math.min(80, s.editorHeight + deltaPercent),
-        );
+        const key = isHorizontal ? "editorHeightHorizontal" : "editorHeightVertical";
+        s[key] = Math.max(20, Math.min(80, s[key] + deltaPercent));
       });
     },
 
@@ -92,5 +104,11 @@ export const useUIStore = create<UIState>()(
     },
 
     clearPinnedResult: () => set({ pinnedResult: null }),
+
+    toggleEditorCollapsed: () => set((s) => { s.editorCollapsed = !s.editorCollapsed; }),
+    cyclePanelPosition: () => set((s) => {
+      const next = PANEL_POSITION_CYCLE[(PANEL_POSITION_CYCLE.indexOf(s.editorPosition) + 1) % PANEL_POSITION_CYCLE.length];
+      s.editorPosition = next;
+    }),
   })),
 );

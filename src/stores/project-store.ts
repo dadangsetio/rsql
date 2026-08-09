@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import { toast } from "sonner";
 import { DriverFactory } from "@/lib/database-driver";
+import { useActivityStore } from "@/stores/activity-store";
 import type {
   ProjectMap,
   ProjectDetails,
@@ -168,6 +169,7 @@ export const useProjectStore = create<ProjectState>()(
         });
 
         if (st === PCS.Connected) {
+          useActivityStore.getState().log("success", `Connected to ${d.database} (${projectId})`);
           const [sc, dbs, tsp] = await Promise.allSettled([
             driver.loadSchemas(projectId),
             driver.loadDatabases?.(projectId),
@@ -197,6 +199,7 @@ export const useProjectStore = create<ProjectState>()(
           description: msg,
           duration: 10000,
         });
+        useActivityStore.getState().log("error", `Connection failed: ${d?.database || projectId}`, msg);
       }
     },
 
@@ -440,8 +443,11 @@ export const useProjectStore = create<ProjectState>()(
         );
 
         toast.success("Connection refreshed");
-      } catch {
+        useActivityStore.getState().log("success", `Refreshed connection: ${d.database} (${projectId})`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         toast.error("Failed to refresh connection data");
+        useActivityStore.getState().log("error", `Failed to refresh connection: ${d.database} (${projectId})`, msg);
       }
     },
 
@@ -451,6 +457,7 @@ export const useProjectStore = create<ProjectState>()(
       set((s) => {
         s.status[projectId] = PCS.Disconnected;
       });
+      useActivityStore.getState().log("info", `Removed connection: ${projectId}`);
     },
 
     saveConnection: async (name: string, details: ProjectDetails) => {

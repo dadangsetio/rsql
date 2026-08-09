@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
-import type { Tab, QueryResult, ExplainPlan, VirtualQuery } from "@/types";
+import type { Tab, QueryResult, ExplainPlan, VirtualQuery, FilterState, SortState } from "@/types";
 
 let nextId = 1;
 function genTabId(): string {
@@ -33,6 +33,8 @@ interface TabState {
   setProjectId: (index: number, projectId: string) => void;
   setExplainResult: (index: number, plan: ExplainPlan | undefined) => void;
   setVirtualQuery: (index: number, vq: VirtualQuery | undefined) => void;
+  setFilter: (index: number, filter: FilterState | undefined) => void;
+  setSort: (index: number, sort: SortState | undefined) => void;
   toggleSplit: (index: number) => void;
   updateSplitContent: (index: number, value: string) => void;
   setSplitResult: (index: number, result: QueryResult) => void;
@@ -191,6 +193,14 @@ export const useTabStore = create<TabState>()(
       setVirtualQuery: (index, vq) =>
         set((s) => {
           s.tabs[index].virtualQuery = vq;
+        }),
+      setFilter: (index, filter) =>
+        set((s) => {
+          s.tabs[index].filter = filter;
+        }),
+      setSort: (index, sort) =>
+        set((s) => {
+          s.tabs[index].sort = sort;
         }),
 
       toggleSplit: (index) => {

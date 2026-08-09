@@ -527,8 +527,8 @@ pub async fn load_columns(
     Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
 }
 
-/// Column detail info: (name, data_type, nullable, default_value)
-pub type ColumnDetail = (String, String, bool, Option<String>);
+/// Column detail info: (name, data_type, nullable, default_value, udt_name)
+pub type ColumnDetail = (String, String, bool, Option<String>, String);
 
 /// Load detailed column info for a given schema and table.
 pub async fn load_column_details(
@@ -538,7 +538,7 @@ pub async fn load_column_details(
 ) -> Result<Vec<ColumnDetail>, AppError> {
     let rows = client
         .query(
-            r#"SELECT column_name, data_type, is_nullable, column_default
+            r#"SELECT column_name, data_type, is_nullable, column_default, udt_name
                FROM information_schema.columns
                WHERE table_schema = $1 AND table_name = $2
                ORDER BY ordinal_position"#,
@@ -554,7 +554,8 @@ pub async fn load_column_details(
             let data_type: String = r.get(1);
             let nullable_str: String = r.get(2);
             let default_val: Option<String> = r.get(3);
-            (name, data_type, nullable_str == "YES", default_val)
+            let udt_name: String = r.get(4);
+            (name, data_type, nullable_str == "YES", default_val, udt_name)
         })
         .collect())
 }

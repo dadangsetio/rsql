@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 import { useUIStore } from "@/stores/ui-store";
 import { useTabStore } from "@/stores/tab-store";
+import { DriverFactory } from "@/lib/database-driver";
 import { useQueryStore } from "@/stores/query-store";
 import { ProjectConnectionStatus } from "@/types";
 import type { ProjectDetails } from "@/types";
@@ -36,6 +37,7 @@ import {
   Package,
   Plus,
   RefreshCw,
+  Save,
   ScrollText,
   Server,
   Settings,
@@ -43,8 +45,10 @@ import {
   Shield,
   Table,
   Trash2,
+  Upload,
   Zap,
 } from "lucide-react";
+import { PgBackupModal } from "@/components/pg-backup-modal";
 
 // Indent levels (px)
 const I = { server: 4, cat: 14, db: 24, schema: 32, schemaObj: 40, table: 48, section: 56, item: 64 };
@@ -77,6 +81,7 @@ JOIN pg_namespace n ON n.oid = p.pronamespace
 WHERE n.nspname = '${schema}' AND p.proname = '${fnName}'
 LIMIT 1;`;
 }
+
 
 export function ServerSidebar({
   onEditConnection,
@@ -139,6 +144,9 @@ export function ServerSidebar({
   // CSV Import modal state
   const [csvImportTarget, setCsvImportTarget] = React.useState<{projectId: string; schema: string; table: string; columns: string[]} | null>(null);
 
+  // Backup/Restore modal state
+  const [pgBackupTarget, setPgBackupTarget] = React.useState<{ mode: "backup" | "restore"; projectId: string; dbName: string } | null>(null);
+
   React.useEffect(() => {
     if (!queriesLoaded) void loadQueries();
   }, [queriesLoaded, loadQueries]);
@@ -197,7 +205,19 @@ export function ServerSidebar({
   };
 
   const onOpenTableQuery = (projectId: string, schema: string, table: string) => {
-    openTab(projectId, `SELECT * FROM "${schema}"."${table}" LIMIT 100;`);
+    const sql = `SELECT * FROM "${schema}"."${table}" LIMIT 100;`;
+    openTab(projectId, sql);
+
+    const d = useProjectStore.getState().projects[projectId];
+    if (!d) return;
+    const newTabIdx = useTabStore.getState().tabs.length - 1;
+    useTabStore.getState().setExecuting(newTabIdx, true);
+    const driver = DriverFactory.getDriver(d.driver);
+    driver.runQuery(projectId, sql).then(([cols, rows, time]) => {
+      useTabStore.getState().updateResult(newTabIdx, { columns: cols, rows, time });
+    }).catch(() => {
+      useTabStore.getState().setExecuting(newTabIdx, false);
+    });
   };
 
   const copy = (text: string) => navigator.clipboard.writeText(text);
@@ -280,8 +300,8 @@ export function ServerSidebar({
                               expanded={isTableOpen}
                               loading={loading[tKey]}
                               selected={selectedItem === tKey}
-                              onClick={() => { setSelectedItem(tKey); void onExpandTable(pid, schema, ti.name); }}
-                              onDoubleClick={() => onOpenTableQuery(pid, schema, ti.name)}
+                              onClick={() => { setSelectedItem(tKey); onOpenTableQuery(pid, schema, ti.name); }}
+                              onChevronClick={() => { setSelectedItem(tKey); void onExpandTable(pid, schema, ti.name); }}
                               onContextMenu={(e) => { setSelectedItem(tKey); showMenu(e, [
                                 { header: "Query" },
                                 { label: "SELECT TOP 100", icon: <Table className="h-3 w-3" />, onClick: () => onOpenTableQuery(pid, schema, ti.name) },
@@ -638,6 +658,9 @@ export function ServerSidebar({
                                       { label: "Schema Diff", icon: <Columns3 className="h-3 w-3" />, onClick: () => openSchemaDiffTab(dbPid) },
                                       { label: "Extensions", icon: <Package className="h-3 w-3" />, onClick: () => openExtensionsTab(dbPid) },
                                       { label: "Enum Types", icon: <List className="h-3 w-3" />, onClick: () => openEnumsTab(dbPid) },
+                                      { separator: true as const },
+                                      { label: "Backup...", icon: <Save className="h-3 w-3" />, onClick: () => setPgBackupTarget({ mode: "backup", projectId: dbPid, dbName }) },
+                                      { label: "Restore...", icon: <Upload className="h-3 w-3" />, onClick: () => setPgBackupTarget({ mode: "restore", projectId: dbPid, dbName }) },
                                     ] : []),
                                     ...(onEditConnection ? [{ separator: true as const }, { label: "Edit Connection", icon: <Edit3 className="h-3 w-3" />, onClick: () => onEditConnection(dbPid) }] : []),
                                     { separator: true as const },
@@ -798,6 +821,15 @@ export function ServerSidebar({
           tableColumns={csvImportTarget.columns}
         />
       )}
+      {pgBackupTarget && (
+        <PgBackupModal
+          open={!!pgBackupTarget}
+          onOpenChange={(open) => { if (!open) setPgBackupTarget(null); }}
+          mode={pgBackupTarget.mode}
+          projectId={pgBackupTarget.projectId}
+          dbName={pgBackupTarget.dbName}
+        />
+      )}
     </div>
   );
 }
@@ -821,7 +853,7 @@ function IndentGuides({ indent }: { indent: number }) {
 /** Generic tree row */
 function TreeRow({
   indent, icon, label, bold, expanded, loading: isLoading, trailing, selected,
-  onClick, onDoubleClick, onContextMenu,
+  onClick, onDoubleClick, onContextMenu, onChevronClick,
 }: {
   indent: number;
   icon: React.ReactNode;
@@ -834,6 +866,8 @@ function TreeRow({
   onClick?: () => void;
   onDoubleClick?: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
+  /** When set, the chevron becomes its own click target (expand/collapse) separate from the row's onClick. */
+  onChevronClick?: () => void;
 }) {
   return (
     <button
@@ -851,7 +885,15 @@ function TreeRow({
       <IndentGuides indent={indent} />
       {expanded !== undefined ? (
         isLoading ? <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
-          : expanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+          : onChevronClick ? (
+            <span
+              role="button"
+              onClick={(e) => { e.stopPropagation(); onChevronClick(); }}
+              className="shrink-0 -m-1 p-1 rounded-sm hover:bg-black/[0.08] dark:hover:bg-white/[0.12]"
+            >
+              {expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
+            </span>
+          ) : expanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
             : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
       ) : null}
       <span className="shrink-0">{icon}</span>

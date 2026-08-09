@@ -23,7 +23,7 @@ function unpackResult(packed: string, time: number): WireQueryResult {
   const rows = parts.slice(1).map((r) => r.split(CELL_SEP));
   return [columns, rows, time];
 }
-type WireColumnDetail = [string, string, boolean, string | null];
+type WireColumnDetail = [string, string, boolean, string | null, string];
 type WireIndexDetail = [string, string, boolean, boolean];
 type WireConstraintDetail = [string, string, string];
 type WireTriggerDetail = [string, string, string];
@@ -106,8 +106,8 @@ export interface DatabaseDriver {
 }
 
 function parseColumnDetails(wire: WireColumnDetail[]): ColumnDetail[] {
-  return wire.map(([name, dataType, nullable, defaultValue]) => ({
-    name, dataType, nullable, defaultValue,
+  return wire.map(([name, dataType, nullable, defaultValue, udtName]) => ({
+    name, dataType, nullable, defaultValue, udtName,
   }));
 }
 

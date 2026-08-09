@@ -1,9 +1,12 @@
+import { useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, useActiveTab } from "@/stores/tab-store";
 import { useUIStore } from "@/stores/ui-store";
 import { ProjectConnectionStatus } from "@/types";
-import { Database, Download, Moon, Search, Sun } from "lucide-react";
+import { ChevronDown, Database, DatabaseBackup, Download, Moon, Save, Search, Sun, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
+import { PgBackupModal } from "@/components/pg-backup-modal";
 
 export function TopBar({
   onCheckUpdates,
@@ -21,6 +24,9 @@ export function TopBar({
   const setProjectId = useTabStore((s) => s.setProjectId);
   const activeProject = activeTab?.projectId;
   const activeProjectDetails = activeProject ? projects[activeProject] : undefined;
+  const activeConnected = !!activeProject && status[activeProject] === ProjectConnectionStatus.Connected;
+  const { menu, showMenu, closeMenu } = useContextMenu();
+  const [pgBackupTarget, setPgBackupTarget] = useState<{ mode: "backup" | "restore"; projectId: string; dbName: string } | null>(null);
 
   return (
     <div className="flex h-11 items-center justify-between border-b border-border/50 bg-card/80 backdrop-blur-xl px-4">
@@ -83,6 +89,33 @@ export function TopBar({
         <Button
           variant="ghost"
           size="sm"
+          className="h-8 gap-1.5"
+          title="Backup or restore a database"
+          onClick={(e) => showMenu(e, [
+            { header: "Current Database" },
+            {
+              label: activeConnected ? `Backup ${activeProjectDetails?.database}...` : "Backup... (connect a database first)",
+              icon: <Save className="h-3 w-3" />,
+              disabled: !activeConnected,
+              onClick: () => setPgBackupTarget({ mode: "backup", projectId: activeProject!, dbName: activeProjectDetails?.database ?? activeProject! }),
+            },
+            {
+              label: activeConnected ? `Restore ${activeProjectDetails?.database}...` : "Restore... (connect a database first)",
+              icon: <Upload className="h-3 w-3" />,
+              disabled: !activeConnected,
+              onClick: () => setPgBackupTarget({ mode: "restore", projectId: activeProject!, dbName: activeProjectDetails?.database ?? activeProject! }),
+            },
+          ])}
+        >
+          <DatabaseBackup className="h-4 w-4" />
+          <ChevronDown className="h-3 w-3 opacity-60" />
+        </Button>
+
+        <div className="h-4 w-px bg-border/50" />
+
+        <Button
+          variant="ghost"
+          size="sm"
           className="h-8 gap-2"
           onClick={onCheckUpdates}
         >
@@ -102,6 +135,18 @@ export function TopBar({
           )}
         </Button>
       </div>
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={closeMenu} />}
+
+      {pgBackupTarget && (
+        <PgBackupModal
+          open={!!pgBackupTarget}
+          onOpenChange={(v) => { if (!v) setPgBackupTarget(null); }}
+          mode={pgBackupTarget.mode}
+          projectId={pgBackupTarget.projectId}
+          dbName={pgBackupTarget.dbName}
+        />
+      )}
     </div>
   );
 }

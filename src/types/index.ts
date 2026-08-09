@@ -36,6 +36,66 @@ export interface Tab {
   splitEditorValue?: string;
   splitResult?: QueryResult;
   isSplitExecuting?: boolean;
+  filter?: FilterState;
+  sort?: SortState;
+}
+
+/** Comparison operators offered by the results filter bar, keyed by column kind (see filter-utils.ts). */
+export type FilterOperator =
+  | "eq"
+  | "neq"
+  | "gt"
+  | "lt"
+  | "gte"
+  | "lte"
+  | "contains"
+  | "starts_with"
+  | "ends_with"
+  | "between"
+  | "in"
+  | "is_null"
+  | "is_not_null"
+  | "is_true"
+  | "is_false";
+
+/** How a condition combines with everything before it in the list. Ignored on the first
+ *  condition (there's nothing before it yet). Per-condition rather than one global toggle, so
+ *  each connector can be flipped independently instead of every "and"/"or" in the list moving
+ *  together. */
+export type FilterJoin = "and" | "or";
+
+export interface ColumnFilterCondition {
+  id: string;
+  type: "column";
+  join: FilterJoin;
+  column: string;
+  operator: FilterOperator;
+  value: string;
+  /** Second value, only used by the "between" operator. */
+  value2?: string;
+}
+
+/** A hand-written WHERE fragment — selectable from the same column dropdown as a real column
+ *  ("Raw SQL"), not a separate mode or a separate add button. */
+export interface RawFilterCondition {
+  id: string;
+  type: "raw";
+  join: FilterJoin;
+  sql: string;
+}
+
+export type FilterCondition = ColumnFilterCondition | RawFilterCondition;
+
+export interface FilterState {
+  open: boolean;
+  conditions: FilterCondition[];
+}
+
+/** Column sort applied by clicking a results-grid header. Persists on the tab like `filter`
+ *  does, so it survives tab switches until the user clicks a header again. */
+export interface SortState {
+  column: string;
+  direction: "asc" | "desc";
 }
 
 export interface ExplainNode {
@@ -97,6 +157,7 @@ export interface ColumnDetail {
   dataType: string;
   nullable: boolean;
   defaultValue: string | null;
+  udtName: string;
 }
 
 export interface IndexDetail {

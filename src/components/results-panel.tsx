@@ -12,28 +12,31 @@ import {
   Copy,
   Diff,
   Download,
-  Edit3,
+  Filter as FilterIcon,
   GitBranch,
   History,
   Loader2,
   Pin,
   Save,
-  Search,
   Square,
   X,
   XCircle,
-  Trash2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
 import { ResultsGrid } from "./results-grid";
+import { RelationPickerModal } from "./relation-picker-modal";
 import { ResultsRecord } from "./results-record";
 import { QueryHistory } from "./query-history";
 import { ExplainPanel } from "./explain-panel";
+import { FilterBar } from "./filter-bar";
 import { exportResults, copyToClipboard, type ExportFormat } from "@/lib/export";
 import { parseSelectTable, generateUpdate, generateDelete, quoteIdent, quoteLiteral } from "@/lib/sql-utils";
 import { ResultsMap, hasGeometryColumn } from "./results-map";
 import type { ForeignKey } from "@/lib/database-driver";
 import * as virtualCache from "@/lib/virtual-cache";
+import { classifyColumnEditKind, buildEnumLabelMap, type ColumnEditInfo } from "@/lib/column-edit-kind";
+import { classifyFilterColumnKind, buildFilteredSql, buildSortedSql, conditionToSql, emptyFilterState, newColumnCondition, newRawCondition, type FilterColumnInfo } from "@/lib/filter-utils";
+import type { FilterState, SortState } from "@/types";
 
 const CELL_SEP = "\x1F";
 const ROW_SEP = "\x1E";
@@ -41,7 +44,17 @@ const MAX_CONCURRENT_PAGE_FETCHES = 6;
 const MAX_QUEUED_PAGE_FETCHES = 32;
 const CACHE_WINDOW_PAGES = 24;
 
+// Removing the last condition (from any row's own remove button) leaves nothing to show —
+// close the bar automatically rather than leaving an empty shell with just an "Add" button.
+function normalizeFilter(next: FilterState): FilterState {
+  return next.conditions.length === 0 ? { ...next, open: false } : next;
+}
+
 type PanelView = "grid" | "record" | "history" | "explain" | "diff" | "map";
+
+type UndoEntry =
+  | { type: "cell"; rowIndex: number; colIndex: number; previousValue: string | undefined }
+  | { type: "deletedRows"; rowIndex: number; wasDeleted: boolean };
 
 interface EditState {
   schema: string;
@@ -49,6 +62,7 @@ interface EditState {
   pkColumns: string[];
   cellEdits: Map<string, string>;
   deletedRows: Set<number>;
+  undoStack: UndoEntry[];
 }
 
 export function ResultsPanel() {
@@ -57,23 +71,12 @@ export function ResultsPanel() {
   const setViewMode = useUIStore((s) => s.setViewMode);
   const pinnedResult = useUIStore((s) => s.pinnedResult);
   const [panelView, setPanelView] = useState<PanelView>("grid");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-
-  // Debounce search term — avoids filtering 50K rows on every keystroke
-  useEffect(() => {
-    if (!searchTerm.trim()) {
-      setDebouncedSearch("");
-      return;
-    }
-    const timer = setTimeout(() => setDebouncedSearch(searchTerm), 200);
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
+  const [filterError, setFilterError] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editState, setEditState] = useState<EditState | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [isCommitting, setIsCommitting] = useState(false);
-  const [pendingDeleteCount, setPendingDeleteCount] = useState(0);
+  const [pendingCommit, setPendingCommit] = useState<{ statements: string[]; deleteCount: number } | null>(null);
   const result = activeTab?.result;
   const isExecuting = activeTab?.isExecuting;
   const vq = activeTab?.virtualQuery;
@@ -201,14 +204,10 @@ export function ResultsPanel() {
     }
   }, [vq?.queryId, vq?.totalRows, vq?.pageSize, restoreRowIndex, handlePageNeeded]);
 
-  const filteredRows = useMemo(() => {
-    if (isEditing) return result?.rows ?? [];
-    if (!result || !debouncedSearch.trim()) return result?.rows ?? [];
-    const term = debouncedSearch.toLowerCase();
-    return result.rows.filter((row) =>
-      row.some((cell) => cell.toLowerCase().includes(term)),
-    );
-  }, [result, debouncedSearch, isEditing]);
+  // No client-side row filtering anymore — the filter bar re-queries the database instead
+  // (see applyFilter below), so the grid always shows the full current result set.
+  const filteredRowIndices = null;
+  const filteredRows = result?.rows ?? [];
 
   const explainResult = activeTab?.explainResult;
   const hasExplain = !!explainResult;
@@ -221,6 +220,11 @@ export function ResultsPanel() {
 
   // FK column map: columnName → { targetSchema, targetTable, targetColumn }
   const [fkMap, setFkMap] = useState<Map<string, { schema: string; table: string; column: string }>>(new Map());
+  // Column name → how to edit it (enum dropdown, date/timestamp picker, boolean toggle)
+  const [columnTypes, setColumnTypes] = useState<Map<string, ColumnEditInfo>>(new Map());
+  // Column name → filter-bar operator bucket (separate from columnTypes/ColumnEditKind, which
+  // lumps integers into "text" — wrong for filtering, where integers need >/<).
+  const [filterColumnKinds, setFilterColumnKinds] = useState<Map<string, FilterColumnInfo>>(new Map());
 
   useEffect(() => {
     if (!editableTable || !activeTab?.projectId) {
@@ -247,6 +251,36 @@ export function ResultsPanel() {
     }).catch(() => setFkMap(new Map()));
   }, [editableTable, activeTab?.projectId]);
 
+  useEffect(() => {
+    if (!editableTable || !activeTab?.projectId) {
+      setColumnTypes(new Map());
+      setFilterColumnKinds(new Map());
+      return;
+    }
+    const pid = activeTab.projectId;
+    const d = useProjectStore.getState().projects[pid];
+    if (!d) return;
+
+    const driver = DriverFactory.getDriver(d.driver);
+    Promise.all([
+      useProjectStore.getState().loadColumnDetails(pid, editableTable.schema, editableTable.table),
+      driver.loadEnumTypes?.(pid) ?? Promise.resolve([]),
+    ]).then(([colDetails, enumRows]) => {
+      const enumLabelMap = buildEnumLabelMap(enumRows);
+      const typeMap = new Map<string, ColumnEditInfo>();
+      const filterKindMap = new Map<string, FilterColumnInfo>();
+      for (const c of colDetails) {
+        typeMap.set(c.name, classifyColumnEditKind(c.dataType, c.udtName, c.nullable, enumLabelMap));
+        filterKindMap.set(c.name, classifyFilterColumnKind(c.dataType, c.udtName, enumLabelMap));
+      }
+      setColumnTypes(typeMap);
+      setFilterColumnKinds(filterKindMap);
+    }).catch(() => {
+      setColumnTypes(new Map());
+      setFilterColumnKinds(new Map());
+    });
+  }, [editableTable, activeTab?.projectId]);
+
   // FK navigate handler - opens a new tab and auto-executes the query
   const handleFKNavigate = useCallback(
     (colName: string, value: string) => {
@@ -271,6 +305,22 @@ export function ResultsPanel() {
     },
     [fkMap, activeTab?.projectId],
   );
+
+  // Relation picker — opened by double-clicking (or Enter/Space on) an editable FK cell.
+  const [fkPicker, setFkPicker] = useState<{ rowIndex: number; colIndex: number } | null>(null);
+  const handleFKPickerOpen = useCallback((rowIndex: number, colIndex: number) => {
+    setFkPicker({ rowIndex, colIndex });
+  }, []);
+  const fkPickerInfo = useMemo(() => {
+    if (!fkPicker || !result || !activeTab?.projectId) return null;
+    const colName = result.columns[fkPicker.colIndex];
+    const target = fkMap.get(colName);
+    if (!target) return null;
+    const key = `${fkPicker.rowIndex}:${fkPicker.colIndex}`;
+    const currentValue = editState?.cellEdits.get(key) ?? result.rows[fkPicker.rowIndex]?.[fkPicker.colIndex] ?? "null";
+    const nullable = columnTypes.get(colName)?.nullable ?? true;
+    return { rowIndex: fkPicker.rowIndex, colIndex: fkPicker.colIndex, ...target, currentValue, nullable };
+  }, [fkPicker, result, activeTab?.projectId, fkMap, editState, columnTypes]);
 
   // Enter edit mode
   const handleEnterEdit = useCallback(async () => {
@@ -307,6 +357,7 @@ export function ResultsPanel() {
         pkColumns,
         cellEdits: new Map(),
         deletedRows: new Set(),
+        undoStack: [],
       });
       setIsEditing(true);
     } catch (err: any) {
@@ -320,6 +371,159 @@ export function ResultsPanel() {
     setEditState(null);
     setEditError(null);
   }, []);
+
+  // Auto-discard once nothing is staged anymore (e.g. undoing the last edit, or
+  // restoring the last deleted row). Only fires on a non-empty → empty transition,
+  // never on the initial (already-empty) edit state a lazy bootstrap creates just
+  // before it applies the edit that triggered entering edit mode.
+  const pendingChangeCountRef = useRef(0);
+  useEffect(() => {
+    const pending = (editState?.cellEdits.size ?? 0) + (editState?.deletedRows.size ?? 0);
+    if (editState && pendingChangeCountRef.current > 0 && pending === 0) {
+      handleDiscard();
+    }
+    pendingChangeCountRef.current = pending;
+  }, [editState, handleDiscard]);
+
+  // Filter bar — state lives on the tab so it survives tab switches. Applying a filter
+  // rewrites the tab's base query (wrapped as a subquery, see buildFilteredSql) and re-runs
+  // it, mirroring virtual/non-virtual execution the same way App.tsx's runQuery does.
+  const filterState = activeTab?.filter ?? emptyFilterState();
+  const hasActiveFilter = filterState.conditions.some((c) => conditionToSql(c) !== null);
+
+  const handleFilterChange = useCallback((next: FilterState) => {
+    const idx = useTabStore.getState().selectedTabIndex;
+    useTabStore.getState().setFilter(idx, normalizeFilter(next));
+  }, []);
+
+  // Dedup so mode/match toggles that don't change the effective WHERE body don't refire
+  // an identical query; reset whenever the active tab changes.
+  const lastAppliedSqlRef = useRef<string | null>(null);
+  useEffect(() => {
+    lastAppliedSqlRef.current = null;
+  }, [activeTab?.id]);
+
+  const applyFilterAndSort = useCallback(async (nextFilter: FilterState, nextSort: SortState | undefined) => {
+    const idx = useTabStore.getState().selectedTabIndex;
+    const tab = useTabStore.getState().tabs[idx];
+    if (!tab?.projectId) return;
+    useTabStore.getState().setFilter(idx, normalizeFilter(nextFilter));
+    useTabStore.getState().setSort(idx, nextSort);
+
+    let sql = buildFilteredSql(tab.editorValue, nextFilter) ?? tab.editorValue;
+    sql = buildSortedSql(sql, nextSort) ?? sql;
+    if (sql === lastAppliedSqlRef.current) return;
+    lastAppliedSqlRef.current = sql;
+
+    const d = useProjectStore.getState().projects[tab.projectId];
+    if (!d) return;
+    const driver = DriverFactory.getDriver(d.driver);
+    setFilterError(null);
+
+    const prevVQ = tab.virtualQuery;
+    if (prevVQ?.queryId) {
+      await driver.closeVirtual?.(tab.projectId, prevVQ.queryId).catch(() => {});
+      virtualCache.clearQuery(prevVQ.queryId);
+      useTabStore.getState().setVirtualQuery(idx, undefined);
+    }
+
+    useTabStore.getState().setExecuting(idx, true);
+    try {
+      if (driver.executeVirtual) {
+        const queryId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+        const pageSize = prevVQ?.pageSize ?? 2000;
+        const [colsPacked, totalRows, pagePacked, elapsed] =
+          await driver.executeVirtual(tab.projectId, sql, queryId, pageSize);
+
+        if (!colsPacked) {
+          const parts = pagePacked ? pagePacked.split(ROW_SEP) : [];
+          const columns = parts[0] ? parts[0].split(CELL_SEP) : [];
+          const rows = parts.slice(1).map((r) => r.split(CELL_SEP));
+          await driver.closeVirtual?.(tab.projectId, queryId).catch(() => {});
+          useTabStore.getState().updateResult(idx, { columns, rows, time: elapsed });
+        } else {
+          const columns = colsPacked.split(CELL_SEP);
+          const firstPage = pagePacked ? pagePacked.split(ROW_SEP).map((r) => r.split(CELL_SEP)) : [];
+          if (totalRows <= pageSize) {
+            await driver.closeVirtual?.(tab.projectId, queryId).catch(() => {});
+            useTabStore.getState().updateResult(idx, { columns, rows: firstPage, time: elapsed });
+          } else {
+            virtualCache.setPage(queryId, 0, firstPage);
+            useTabStore.getState().setVirtualQuery(idx, { queryId, columns, totalRows, pageSize, colCount: columns.length, time: elapsed });
+            useTabStore.getState().updateResult(idx, { columns, rows: firstPage, time: elapsed });
+          }
+        }
+      } else {
+        const [cols, rows, time] = await driver.runQuery(tab.projectId, sql);
+        useTabStore.getState().updateResult(idx, { columns: cols, rows, time });
+      }
+    } catch (err: any) {
+      lastAppliedSqlRef.current = null;
+      setFilterError(err?.message ?? "Filter query failed");
+      useTabStore.getState().setExecuting(idx, false);
+    }
+  }, []);
+
+  const applyFilter = useCallback((next: FilterState) => {
+    const idx = useTabStore.getState().selectedTabIndex;
+    return applyFilterAndSort(next, useTabStore.getState().tabs[idx]?.sort);
+  }, [applyFilterAndSort]);
+
+  // Column-header click: asc -> desc -> unsorted, restarting at asc when a different column
+  // is clicked. Persists on the tab like `filter` does (see SortState).
+  const handleSortColumn = useCallback((colIndex: number) => {
+    const idx = useTabStore.getState().selectedTabIndex;
+    const tab = useTabStore.getState().tabs[idx];
+    const col = tab?.result?.columns[colIndex];
+    if (!tab || !col) return;
+    const current = tab.sort;
+    const next: SortState | undefined =
+      !current || current.column !== col ? { column: col, direction: "asc" }
+      : current.direction === "asc" ? { column: col, direction: "desc" }
+      : undefined;
+    applyFilterAndSort(tab.filter ?? emptyFilterState(), next);
+  }, [applyFilterAndSort]);
+
+  const toggleFilterBar = useCallback(() => {
+    const idx = useTabStore.getState().selectedTabIndex;
+    const tab = useTabStore.getState().tabs[idx];
+    const current = tab?.filter ?? emptyFilterState();
+
+    if (current.open) {
+      useTabStore.getState().setFilter(idx, { ...current, open: false });
+      return;
+    }
+
+    // Opening with nothing set up yet — start from one row instead of an empty shell.
+    const columns = tab?.result?.columns ?? [];
+    const conditions = current.conditions.length > 0
+      ? current.conditions
+      : [
+          editableTable && columns.length > 0
+            ? newColumnCondition(columns[0], filterColumnKinds.get(columns[0])?.kind ?? "text")
+            : newRawCondition(),
+        ];
+    useTabStore.getState().setFilter(idx, { ...current, open: true, conditions });
+  }, [editableTable, filterColumnKinds]);
+
+  // Cmd/Ctrl+F opens/closes the filter bar; Escape closes it. Both defer to Monaco's own
+  // find widget when the SQL editor has focus.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".monaco-editor")) return;
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        if (!result || panelView === "history") return;
+        e.preventDefault();
+        toggleFilterBar();
+      } else if (e.key === "Escape" && filterState.open) {
+        toggleFilterBar();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [result, panelView, filterState.open, toggleFilterBar]);
 
   // Run statements + refresh results helper
   const runAndRefresh = useCallback(async (statements: string[]) => {
@@ -341,7 +545,7 @@ export function ResultsPanel() {
 
       setIsEditing(false);
       setEditState(null);
-      setPendingDeleteCount(0);
+      setPendingCommit(null);
     } catch (err: any) {
       setEditError(err?.message ?? "Commit failed");
     } finally {
@@ -349,7 +553,8 @@ export function ResultsPanel() {
     }
   }, [activeTab?.projectId, activeTab?.editorValue]);
 
-  // Commit — only cell edits (UPDATEs), no deletes
+  // Commit — cell edits (UPDATEs) and staged row deletions (DELETEs) together.
+  // Deletions ask for confirmation first since they're destructive.
   const handleCommit = useCallback(() => {
     if (!editState || !result) return;
     const { schema, table, pkColumns, cellEdits, deletedRows } = editState;
@@ -370,106 +575,163 @@ export function ResultsPanel() {
     for (const [rowIdx, changes] of editsByRow) {
       statements.push(generateUpdate(schema, table, columns, originalRows[rowIdx], changes, pkColumns));
     }
+    for (const rowIdx of deletedRows) {
+      statements.push(generateDelete(schema, table, columns, originalRows[rowIdx], pkColumns));
+    }
 
     if (statements.length === 0) {
       handleDiscard();
       return;
     }
 
+    if (deletedRows.size > 0) {
+      setPendingCommit({ statements, deleteCount: deletedRows.size });
+      return;
+    }
+
     void runAndRefresh(statements);
   }, [editState, result, handleDiscard, runAndRefresh]);
 
-  // Delete — only checked rows (DELETEs), with inline confirmation
-  const handleDeleteRows = useCallback(() => {
-    if (!editState || editState.deletedRows.size === 0) return;
-    setPendingDeleteCount(editState.deletedRows.size);
-  }, [editState]);
-
-  const handleConfirmDelete = useCallback(() => {
-    if (!editState || !result) return;
-    const { schema, table, pkColumns, deletedRows } = editState;
-    const columns = result.columns;
-    const originalRows = result.rows;
-
-    const statements: string[] = [];
-    for (const rowIdx of deletedRows) {
-      statements.push(generateDelete(schema, table, columns, originalRows[rowIdx], pkColumns));
-    }
-
-    setPendingDeleteCount(0);
+  const handleConfirmCommit = useCallback(() => {
+    if (!pendingCommit) return;
+    const { statements } = pendingCommit;
+    setPendingCommit(null);
     void runAndRefresh(statements);
-  }, [editState, result, runAndRefresh]);
+  }, [pendingCommit, runAndRefresh]);
 
-  const handleCancelDelete = useCallback(() => {
-    setPendingDeleteCount(0);
+  const handleCancelCommit = useCallback(() => {
+    setPendingCommit(null);
   }, []);
 
   // Cell edit handler
-  const handleCellEdit = useCallback(
+  const applyCellEdit = useCallback(
     (rowIndex: number, colIndex: number, value: string) => {
       setEditState((prev) => {
         if (!prev) return prev;
+        const key = `${rowIndex}:${colIndex}`;
+        const previousValue = prev.cellEdits.get(key);
         const newEdits = new Map(prev.cellEdits);
         const original = result?.rows[rowIndex]?.[colIndex] ?? "";
         if (value === original) {
-          newEdits.delete(`${rowIndex}:${colIndex}`);
+          newEdits.delete(key);
         } else {
-          newEdits.set(`${rowIndex}:${colIndex}`, value);
+          newEdits.set(key, value);
         }
-        return { ...prev, cellEdits: newEdits };
+        const undoStack = [...prev.undoStack, { type: "cell" as const, rowIndex, colIndex, previousValue }];
+        return { ...prev, cellEdits: newEdits, undoStack };
       });
     },
     [result],
   );
 
-  const handleRowDelete = useCallback((rowIndex: number) => {
+  // A double-click on a cell can edit it directly, without pressing "Edit" first —
+  // lazily enter edit mode so the value still lands in editState once it's ready.
+  const handleCellEdit = useCallback(
+    (rowIndex: number, colIndex: number, value: string) => {
+      if (!editState) {
+        // Opening a picker (date/time/enum) and closing it without picking anything still
+        // fires this via blur/click-outside — don't flip into edit mode for a no-op.
+        const original = result?.rows[rowIndex]?.[colIndex] ?? "";
+        if (value === original) return;
+        void handleEnterEdit().then(() => applyCellEdit(rowIndex, colIndex, value));
+        return;
+      }
+      applyCellEdit(rowIndex, colIndex, value);
+    },
+    [editState, handleEnterEdit, applyCellEdit, result],
+  );
+
+  const applyRowDelete = useCallback((rowIndex: number) => {
     setEditState((prev) => {
-      if (!prev) return prev;
+      if (!prev || prev.deletedRows.has(rowIndex)) return prev;
       const newDeleted = new Set(prev.deletedRows);
       newDeleted.add(rowIndex);
-      return { ...prev, deletedRows: newDeleted };
+      const undoStack = [...prev.undoStack, { type: "deletedRows" as const, rowIndex, wasDeleted: false }];
+      return { ...prev, deletedRows: newDeleted, undoStack };
     });
   }, []);
 
-  const handleRowRestore = useCallback((rowIndex: number) => {
+  const applyRowRestore = useCallback((rowIndex: number) => {
     setEditState((prev) => {
-      if (!prev) return prev;
+      if (!prev || !prev.deletedRows.has(rowIndex)) return prev;
       const newDeleted = new Set(prev.deletedRows);
       newDeleted.delete(rowIndex);
-      return { ...prev, deletedRows: newDeleted };
+      const undoStack = [...prev.undoStack, { type: "deletedRows" as const, rowIndex, wasDeleted: true }];
+      return { ...prev, deletedRows: newDeleted, undoStack };
     });
   }, []);
+
+  // Undo the last cell edit or row delete/restore made this edit session.
+  const handleUndo = useCallback(() => {
+    setEditState((prev) => {
+      if (!prev || prev.undoStack.length === 0) return prev;
+      const entry = prev.undoStack[prev.undoStack.length - 1];
+      const undoStack = prev.undoStack.slice(0, -1);
+
+      if (entry.type === "cell") {
+        const key = `${entry.rowIndex}:${entry.colIndex}`;
+        const newEdits = new Map(prev.cellEdits);
+        if (entry.previousValue === undefined) newEdits.delete(key);
+        else newEdits.set(key, entry.previousValue);
+        return { ...prev, cellEdits: newEdits, undoStack };
+      }
+
+      const newDeleted = new Set(prev.deletedRows);
+      if (entry.wasDeleted) newDeleted.add(entry.rowIndex);
+      else newDeleted.delete(entry.rowIndex);
+      return { ...prev, deletedRows: newDeleted, undoStack };
+    });
+  }, []);
+
+  // Selecting a row and pressing Delete can stage it too, without pressing "Edit" first —
+  // lazily enter edit mode so the deletion still lands in editState once it's ready.
+  const handleRowDelete = useCallback(
+    (rowIndex: number) => {
+      if (!editState) {
+        void handleEnterEdit().then(() => applyRowDelete(rowIndex));
+        return;
+      }
+      applyRowDelete(rowIndex);
+    },
+    [editState, handleEnterEdit, applyRowDelete],
+  );
+
+  const handleRowRestore = useCallback(
+    (rowIndex: number) => {
+      if (!editState) return;
+      applyRowRestore(rowIndex);
+    },
+    [editState, applyRowRestore],
+  );
 
   // Common toolbar props
   const toolbarProps = {
     panelView,
     setPanelView,
-    searchTerm,
-    setSearchTerm,
     setViewMode,
     viewMode,
     hasExplain,
     isExecuting: !!isExecuting,
     isEditing,
     editState,
-    editableTable: !!editableTable && !vq,
     isCommitting,
     editError,
-    onEnterEdit: handleEnterEdit,
     onCommit: handleCommit,
-    onDeleteRows: handleDeleteRows,
-    onConfirmDelete: handleConfirmDelete,
-    onCancelDelete: handleCancelDelete,
-    pendingDeleteCount,
+    pendingCommit,
+    onConfirmCommit: handleConfirmCommit,
+    onCancelCommit: handleCancelCommit,
     onDiscard: handleDiscard,
     onCancel: handleCancel,
     virtualQuery: vq,
+    filterOpen: filterState.open,
+    hasActiveFilter,
+    onToggleFilter: toggleFilterBar,
   };
 
   if (panelView === "explain" && hasExplain) {
     return (
       <div className="flex h-full flex-col border-t border-border bg-card">
-        <ResultsToolbar {...toolbarProps} result={result ?? null} columns={result?.columns ?? []} filteredRows={filteredRows} filteredCount={filteredRows.length} />
+        <ResultsToolbar {...toolbarProps} result={result ?? null} columns={result?.columns ?? []} filteredRows={filteredRows} />
         <ExplainPanel plan={explainResult} />
       </div>
     );
@@ -478,7 +740,7 @@ export function ResultsPanel() {
   if (panelView !== "history" && isExecuting && !result) {
     return (
       <div className="flex h-full flex-col">
-        <ResultsToolbar {...toolbarProps} result={null} columns={[]} filteredRows={[]} filteredCount={0} />
+        <ResultsToolbar {...toolbarProps} result={null} columns={[]} filteredRows={[]} />
         <div className="flex flex-1 items-center justify-center text-muted-foreground gap-2">
           <Loader2 className="h-5 w-5 animate-spin" />
           <span className="text-sm">Executing query...</span>
@@ -490,7 +752,7 @@ export function ResultsPanel() {
   if (panelView === "history") {
     return (
       <div className="flex h-full flex-col border-t border-border bg-card">
-        <ResultsToolbar {...toolbarProps} result={result ?? null} columns={result?.columns ?? []} filteredRows={filteredRows} filteredCount={filteredRows.length} />
+        <ResultsToolbar {...toolbarProps} result={result ?? null} columns={result?.columns ?? []} filteredRows={filteredRows} />
         <QueryHistory />
       </div>
     );
@@ -499,7 +761,7 @@ export function ResultsPanel() {
   if (panelView === "diff" && pinnedResult && result) {
     return (
       <div className="flex h-full flex-col border-t border-border bg-card">
-        <ResultsToolbar {...toolbarProps} result={result} columns={result.columns} filteredRows={filteredRows} filteredCount={filteredRows.length} />
+        <ResultsToolbar {...toolbarProps} result={result} columns={result.columns} filteredRows={filteredRows} />
         <DiffView
           pinnedColumns={pinnedResult.columns}
           pinnedRows={pinnedResult.rows}
@@ -513,7 +775,7 @@ export function ResultsPanel() {
   if (panelView === "map" && result) {
     return (
       <div className="flex h-full flex-col border-t border-border bg-card">
-        <ResultsToolbar {...toolbarProps} result={result} columns={result.columns} filteredRows={filteredRows} filteredCount={filteredRows.length} />
+        <ResultsToolbar {...toolbarProps} result={result} columns={result.columns} filteredRows={filteredRows} />
         <ResultsMap columns={result.columns} rows={filteredRows} />
       </div>
     );
@@ -522,7 +784,7 @@ export function ResultsPanel() {
   if (!result) {
     return (
       <div className="flex h-full flex-col">
-        <ResultsToolbar {...toolbarProps} result={null} columns={[]} filteredRows={[]} filteredCount={0} />
+        <ResultsToolbar {...toolbarProps} result={null} columns={[]} filteredRows={[]} />
         <div className="flex flex-1 items-center justify-center text-muted-foreground">
           No data to display
         </div>
@@ -532,7 +794,26 @@ export function ResultsPanel() {
 
   return (
     <div className="flex h-full flex-col border-t border-border bg-card">
-      <ResultsToolbar {...toolbarProps} result={result} columns={result.columns} filteredRows={filteredRows} filteredCount={filteredRows.length} />
+      <ResultsToolbar {...toolbarProps} result={result} columns={result.columns} filteredRows={filteredRows} />
+      {filterState.open && (
+        <FilterBar
+          state={filterState}
+          onChange={handleFilterChange}
+          onApply={applyFilter}
+          columns={result.columns}
+          columnKinds={filterColumnKinds}
+          builderAvailable={!!editableTable}
+        />
+      )}
+      {filterError && (
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-destructive/10 text-destructive text-xs border-b border-border">
+          <XCircle className="h-3 w-3" />
+          {filterError}
+          <button onClick={() => setFilterError(null)} className="ml-auto hover:text-foreground">
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
       {editError && !isEditing && (
         <div className="flex items-center gap-2 px-4 py-1.5 bg-destructive/10 text-destructive text-xs border-b border-border">
           <XCircle className="h-3 w-3" />
@@ -547,14 +828,21 @@ export function ResultsPanel() {
           key={activeTab?.id ?? "results-grid"}
           columns={result.columns}
           rows={filteredRows}
+          rowIndexMap={filteredRowIndices ?? undefined}
           isEditing={isEditing}
+          editable={!!editableTable && !vq}
           cellEdits={editState?.cellEdits}
           deletedRows={editState?.deletedRows}
+          columnTypes={columnTypes}
           onCellEdit={handleCellEdit}
           onRowDelete={handleRowDelete}
           onRowRestore={handleRowRestore}
+          onUndo={handleUndo}
           fkColumns={fkMap}
           onFKNavigate={handleFKNavigate}
+          onFKPickerOpen={handleFKPickerOpen}
+          sort={activeTab?.sort}
+          onSortColumn={handleSortColumn}
           virtualQuery={vq}
           onPageNeeded={vq ? handlePageNeeded : undefined}
           onViewportRowChange={vq ? handleViewportRowChange : undefined}
@@ -564,6 +852,22 @@ export function ResultsPanel() {
         />
       ) : (
         <ResultsRecord columns={result.columns} rows={filteredRows} />
+      )}
+      {fkPickerInfo && activeTab?.projectId && (
+        <RelationPickerModal
+          open
+          onOpenChange={(v) => { if (!v) setFkPicker(null); }}
+          projectId={activeTab.projectId}
+          schema={fkPickerInfo.schema}
+          table={fkPickerInfo.table}
+          column={fkPickerInfo.column}
+          nullable={fkPickerInfo.nullable}
+          currentValue={fkPickerInfo.currentValue}
+          onSelect={(value) => {
+            handleCellEdit(fkPickerInfo.rowIndex, fkPickerInfo.colIndex, value ?? "null");
+            setFkPicker(null);
+          }}
+        />
       )}
     </div>
   );
@@ -575,27 +879,24 @@ interface ToolbarProps {
   result: { rows: string[][]; time: number; capped?: boolean } | null;
   columns: string[];
   filteredRows: string[][];
-  searchTerm: string;
-  setSearchTerm: (v: string) => void;
-  filteredCount: number;
   setViewMode: (mode: "grid" | "record") => void;
   viewMode: "grid" | "record";
   hasExplain: boolean;
   isExecuting: boolean;
   isEditing: boolean;
   editState: EditState | null;
-  editableTable: boolean;
   isCommitting: boolean;
   editError: string | null;
-  onEnterEdit: () => void;
   onCommit: () => void;
-  onDeleteRows: () => void;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
-  pendingDeleteCount: number;
+  pendingCommit: { statements: string[]; deleteCount: number } | null;
+  onConfirmCommit: () => void;
+  onCancelCommit: () => void;
   onDiscard: () => void;
   onCancel?: () => void;
   virtualQuery?: { queryId: string; totalRows: number; time: number; pageSize: number };
+  filterOpen: boolean;
+  hasActiveFilter: boolean;
+  onToggleFilter: () => void;
 }
 
 function ResultsToolbar(props: ToolbarProps) {
@@ -605,27 +906,24 @@ function ResultsToolbar(props: ToolbarProps) {
     result,
     columns,
     filteredRows,
-    searchTerm,
-    setSearchTerm,
-    filteredCount,
     setViewMode,
     viewMode,
     hasExplain,
     isExecuting,
     isEditing,
     editState,
-    editableTable,
     isCommitting,
     editError,
-    onEnterEdit,
     onCommit,
-    onDeleteRows,
-    onConfirmDelete,
-    onCancelDelete,
-    pendingDeleteCount,
+    pendingCommit,
+    onConfirmCommit,
+    onCancelCommit,
     onDiscard,
     onCancel,
     virtualQuery,
+    filterOpen,
+    hasActiveFilter,
+    onToggleFilter,
   } = props;
 
   const [exportOpen, setExportOpen] = useState(false);
@@ -647,7 +945,7 @@ function ResultsToolbar(props: ToolbarProps) {
   };
 
   return (
-    <div className="flex items-center justify-between border-b border-border/50 bg-card/80 backdrop-blur px-4 py-2 flex-shrink-0">
+    <div className="flex items-center justify-between border-b border-border/50 bg-card/80 backdrop-blur px-4 h-11 flex-shrink-0">
       <div className="flex items-center gap-3">
         {/* Panel tabs — segment control */}
         <div className="inline-flex rounded-lg bg-muted p-0.5">
@@ -727,9 +1025,7 @@ function ResultsToolbar(props: ToolbarProps) {
             <span>
               {virtualQuery
                 ? `${virtualQuery.totalRows.toLocaleString()} rows (virtual)`
-                : searchTerm
-                  ? `${filteredCount.toLocaleString()} / ${result.rows.length.toLocaleString()} rows`
-                  : `${result.rows.length.toLocaleString()} rows`}
+                : `${result.rows.length.toLocaleString()} rows`}
               {result.capped && !virtualQuery && (
                 <span className="text-warning ml-1">(capped at 500K)</span>
               )}
@@ -765,9 +1061,11 @@ function ResultsToolbar(props: ToolbarProps) {
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Edit mode controls */}
         {isEditing ? (
           <>
+            {/* Edit mode: double-click a value or select a row and press Delete to stage
+                changes, then Commit or Discard. Other toolbar actions don't apply mid-edit
+                and are hidden rather than shown disabled. */}
             {editError && (
               <span className="text-xs text-destructive max-w-[200px] truncate" title={editError}>
                 {editError}
@@ -775,8 +1073,8 @@ function ResultsToolbar(props: ToolbarProps) {
             )}
             <button
               onClick={onCommit}
-              disabled={(editState?.cellEdits.size ?? 0) === 0 || isCommitting}
-              className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono bg-success text-success-foreground hover:bg-success/90 transition-colors disabled:opacity-50"
+              disabled={((editState?.cellEdits.size ?? 0) === 0 && (editState?.deletedRows.size ?? 0) === 0) || isCommitting}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-success text-success-foreground hover:bg-success/90 transition-colors disabled:opacity-50"
             >
               {isCommitting ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -786,41 +1084,9 @@ function ResultsToolbar(props: ToolbarProps) {
               Commit
             </button>
             <button
-              onClick={onDeleteRows}
-              disabled={(editState?.deletedRows.size ?? 0) === 0 || isCommitting}
-              className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
-            >
-              <Trash2 className="h-3 w-3" />
-              Delete ({editState?.deletedRows.size ?? 0})
-            </button>
-            <Dialog open={pendingDeleteCount > 0} onOpenChange={(open) => { if (!open) onCancelDelete(); }}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Delete rows</DialogTitle>
-                  <DialogDescription>
-                    Are you sure you want to permanently delete {pendingDeleteCount} row{pendingDeleteCount !== 1 ? "s" : ""}? This action cannot be undone.
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <button
-                    onClick={onCancelDelete}
-                    className="px-3 py-1.5 rounded-lg text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={onConfirmDelete}
-                    className="px-3 py-1.5 rounded-lg text-xs font-mono bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
-                  >
-                    Yes, delete {pendingDeleteCount} row{pendingDeleteCount !== 1 ? "s" : ""}
-                  </button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-            <button
               onClick={onDiscard}
               disabled={isCommitting}
-              className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
             >
               <X className="h-3 w-3" />
               Discard
@@ -828,18 +1094,6 @@ function ResultsToolbar(props: ToolbarProps) {
           </>
         ) : (
           <>
-            {/* Edit button */}
-            {panelView !== "history" && editableTable && result && result.rows.length > 0 && (
-              <button
-                onClick={onEnterEdit}
-                className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                title="Edit table data inline"
-              >
-                <Edit3 className="h-3 w-3" />
-                Edit
-              </button>
-            )}
-
             {/* Pin / Diff */}
             {panelView !== "history" && result && result.rows.length > 0 && !virtualQuery && (
               <>
@@ -940,31 +1194,52 @@ function ResultsToolbar(props: ToolbarProps) {
                 )}
               </div>
             )}
-
-            {/* Search */}
-            {panelView !== "history" && result && !virtualQuery && (
-              <div className="relative flex items-center">
-                <Search className="absolute left-2 h-3 w-3 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Search results..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="h-7 w-48 rounded border border-border bg-input pl-7 pr-7 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-                {searchTerm && (
-                  <button
-                    onClick={() => setSearchTerm("")}
-                    className="absolute right-2 text-muted-foreground hover:text-foreground"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-            )}
           </>
         )}
+
+        {/* Filter — re-queries the database rather than filtering already-loaded rows, so it
+            stays available for virtual/paginated results too. Stays visible in edit mode. */}
+        {panelView !== "history" && result && (
+          <button
+            onClick={onToggleFilter}
+            title="Filter results (Cmd/Ctrl+F)"
+            className={`relative flex items-center h-7 px-2 rounded text-xs font-mono transition-colors ${
+              filterOpen ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"
+            }`}
+          >
+            <FilterIcon className="h-3.5 w-3.5" />
+            {hasActiveFilter && (
+              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
+            )}
+          </button>
+        )}
       </div>
+
+      {/* Destructive-delete confirmation — shown when committing staged row deletes */}
+      <Dialog open={!!pendingCommit} onOpenChange={(open) => { if (!open) onCancelCommit(); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete rows</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to permanently delete {pendingCommit?.deleteCount ?? 0} row{pendingCommit?.deleteCount !== 1 ? "s" : ""}? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              onClick={onCancelCommit}
+              className="px-3 py-1.5 rounded-lg text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirmCommit}
+              className="px-3 py-1.5 rounded-lg text-xs font-mono bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+            >
+              Yes, delete {pendingCommit?.deleteCount ?? 0} row{pendingCommit?.deleteCount !== 1 ? "s" : ""}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
