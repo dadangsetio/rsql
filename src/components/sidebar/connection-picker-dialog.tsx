@@ -1,4 +1,3 @@
-import React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
