@@ -2,8 +2,10 @@ import { useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore, useActiveTab } from "@/stores/tab-store";
 import { useUIStore } from "@/stores/ui-store";
+import { ConnectionPickerDialog } from "@/components/sidebar/connection-picker-dialog";
+import { DatabasePickerDialog } from "@/components/sidebar/database-picker-dialog";
 import { ProjectConnectionStatus } from "@/types";
-import { ChevronDown, Database, DatabaseBackup, Download, Moon, Save, Search, Sun, Upload } from "lucide-react";
+import { ChevronDown, Database, DatabaseBackup, Download, Moon, Save, Search, Server, Sun, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { PgBackupModal } from "@/components/pg-backup-modal";
@@ -11,12 +13,19 @@ import { PgBackupModal } from "@/components/pg-backup-modal";
 export function TopBar({
   onCheckUpdates,
   onOpenCommandPalette,
+  onEditConnection,
 }: {
   onCheckUpdates: () => void;
   onOpenCommandPalette: () => void;
+  onEditConnection?: (projectId: string) => void;
 }) {
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
+  const activeServerFp = useUIStore((s) => s.activeServerFp);
+  const connectionPickerOpen = useUIStore((s) => s.connectionPickerOpen);
+  const setConnectionPickerOpen = useUIStore((s) => s.setConnectionPickerOpen);
+  const databasePickerOpen = useUIStore((s) => s.databasePickerOpen);
+  const setDatabasePickerOpen = useUIStore((s) => s.setDatabasePickerOpen);
   const projects = useProjectStore((s) => s.projects);
   const status = useProjectStore((s) => s.status);
   const selectedTabIndex = useTabStore((s) => s.selectedTabIndex);
@@ -35,6 +44,15 @@ export function TopBar({
           <Database className="h-4 w-4 text-primary" />
           <span className="font-mono text-sm font-semibold">RSQL</span>
         </div>
+        <div className="h-4 w-px bg-border/50" />
+
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs font-mono" onClick={() => setConnectionPickerOpen(true)}>
+          <Server className="h-3.5 w-3.5" /> Connection
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs font-mono" disabled={!activeServerFp} onClick={() => setDatabasePickerOpen(true)}>
+          <Database className="h-3.5 w-3.5" /> Databases
+        </Button>
+
         <div className="h-4 w-px bg-border/50" />
         {activeProject && activeProjectDetails && status[activeProject] === ProjectConnectionStatus.Connected ? (
           <div className="flex items-center gap-1.5 bg-accent rounded-full px-2.5 py-0.5 text-xs text-muted-foreground">
@@ -137,6 +155,9 @@ export function TopBar({
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={closeMenu} />}
+
+      <ConnectionPickerDialog open={connectionPickerOpen} onOpenChange={setConnectionPickerOpen} onEditConnection={onEditConnection} />
+      <DatabasePickerDialog open={databasePickerOpen} onOpenChange={setDatabasePickerOpen} />
 
       {pgBackupTarget && (
         <PgBackupModal

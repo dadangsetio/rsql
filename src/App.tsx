@@ -428,6 +428,7 @@ export default function App() {
       <TopBar
         onCheckUpdates={() => void checkForUpdates()}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        onEditConnection={handleEditConnection}
       />
 
       <div className="flex flex-1 overflow-hidden">

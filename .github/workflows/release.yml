@@ -75,7 +75,8 @@ jobs:
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Validate updater signing secrets
+      - name: Detect signing configuration
+        id: sign_check
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -86,29 +87,51 @@ jobs:
           TAURI_SIGNING_RPM_KEY: ${{ secrets.TAURI_SIGNING_RPM_KEY }}
           APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGETOOL_SIGN_PASSPHRASE }}
         run: |
-          [ -n "$TAURI_UPDATER_PUBLIC_KEY" ] || { echo "Missing TAURI_UPDATER_PUBLIC_KEY secret."; exit 1; }
-          [ -n "$TAURI_SIGNING_PRIVATE_KEY" ] || { echo "Missing TAURI_SIGNING_PRIVATE_KEY secret."; exit 1; }
+          # ponytail: no secrets configured yet -> build unsigned artifacts instead of failing the run
+          has_updater=false
+          if [ -n "$TAURI_UPDATER_PUBLIC_KEY" ] && [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            has_updater=true
+          else
+            echo "::warning::Updater signing secrets missing, building without updater artifacts."
+          fi
+          echo "has_updater=$has_updater" >> "$GITHUB_OUTPUT"
 
-          case "$PLATFORM" in
-            windows-latest)
-              [ -n "$WINDOWS_CERTIFICATE" ] || { echo "Missing WINDOWS_CERTIFICATE secret."; exit 1; }
-              [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ] || { echo "Missing WINDOWS_CERTIFICATE_PASSWORD secret."; exit 1; }
-              ;;
-            ubuntu-22.04)
-              [ -n "$TAURI_SIGNING_RPM_KEY" ] || { echo "Missing TAURI_SIGNING_RPM_KEY secret."; exit 1; }
-              [ -n "$APPIMAGETOOL_SIGN_PASSPHRASE" ] || { echo "Missing APPIMAGETOOL_SIGN_PASSPHRASE secret."; exit 1; }
-              ;;
-          esac
+          has_windows_cert=false
+          if [ "$PLATFORM" = "windows-latest" ]; then
+            if [ -n "$WINDOWS_CERTIFICATE" ] && [ -n "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+              has_windows_cert=true
+            else
+              echo "::warning::Windows signing secrets missing, building unsigned exe/msi."
+            fi
+          fi
+          echo "has_windows_cert=$has_windows_cert" >> "$GITHUB_OUTPUT"
+
+          has_linux_signing=false
+          if [ "$PLATFORM" = "ubuntu-22.04" ]; then
+            if [ -n "$TAURI_SIGNING_RPM_KEY" ] && [ -n "$APPIMAGETOOL_SIGN_PASSPHRASE" ]; then
+              has_linux_signing=true
+            else
+              echo "::warning::Linux signing secrets missing, building unsigned AppImage/RPM."
+            fi
+          fi
+          echo "has_linux_signing=$has_linux_signing" >> "$GITHUB_OUTPUT"
 
       - name: Inject updater public key into Tauri config
+        if: steps.sign_check.outputs.has_updater == 'true'
         shell: bash
         env:
           TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
         run: |
           node -e 'const fs=require("fs"); const path="src-tauri/tauri.conf.json"; const config=JSON.parse(fs.readFileSync(path,"utf8")); config.plugins ??= {}; config.plugins.updater ??= {}; config.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY; fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");'
 
+      - name: Disable updater artifact signing
+        if: steps.sign_check.outputs.has_updater == 'false'
+        shell: bash
+        run: |
+          node -e 'const fs=require("fs"); const path="src-tauri/tauri.conf.json"; const config=JSON.parse(fs.readFileSync(path,"utf8")); config.bundle ??= {}; config.bundle.createUpdaterArtifacts = false; fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n");'
+
       - name: Import Windows signing certificate
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-latest' && steps.sign_check.outputs.has_windows_cert == 'true'
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
@@ -132,7 +155,7 @@ jobs:
           "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Configure Windows signing
-        if: matrix.platform == 'windows-latest'
+        if: matrix.platform == 'windows-latest' && steps.sign_check.outputs.has_windows_cert == 'true'
         shell: pwsh
         env:
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
@@ -163,7 +186,7 @@ jobs:
           $config | ConvertTo-Json -Depth 100 | Set-Content -Path $configPath -Encoding utf8NoBOM
 
       - name: Import Linux signing key (AppImage + RPM)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-22.04' && steps.sign_check.outputs.has_linux_signing == 'true'
         env:
           TAURI_SIGNING_RPM_KEY: ${{ secrets.TAURI_SIGNING_RPM_KEY }}
         run: |
@@ -179,8 +202,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          SIGN: ${{ matrix.platform == 'ubuntu-22.04' && '1' || '' }}
-          APPIMAGETOOL_FORCE_SIGN: ${{ matrix.platform == 'ubuntu-22.04' && '1' || '' }}
+          SIGN: ${{ steps.sign_check.outputs.has_linux_signing == 'true' && '1' || '' }}
+          APPIMAGETOOL_FORCE_SIGN: ${{ steps.sign_check.outputs.has_linux_signing == 'true' && '1' || '' }}
           SIGN_KEY: ${{ secrets.SIGN_KEY }}
           APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGETOOL_SIGN_PASSPHRASE }}
           TAURI_SIGNING_RPM_KEY: ${{ secrets.TAURI_SIGNING_RPM_KEY }}

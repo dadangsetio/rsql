@@ -1,21 +1,17 @@
 import React from "react";
-import { Button } from "@/components/ui/button";
 import { DatabaseTree } from "@/components/sidebar/database-tree";
 import { OpenDatabaseTabs } from "@/components/sidebar/open-database-tabs";
-import { ConnectionPickerDialog } from "@/components/sidebar/connection-picker-dialog";
-import { DatabasePickerDialog } from "@/components/sidebar/database-picker-dialog";
 import { useUIStore } from "@/stores/ui-store";
 import { useTabStore } from "@/stores/tab-store";
 import { useQueryStore } from "@/stores/query-store";
 import { cn } from "@/lib/utils";
-import { Copy, Database, FileText, Server, Trash2 } from "lucide-react";
+import { Copy, FileText, Trash2 } from "lucide-react";
 
 export function ServerSidebar({
   onEditConnection,
 }: {
   onEditConnection?: (projectId: string) => void;
 }) {
-  const activeServerFp = useUIStore((s) => s.activeServerFp);
   const activeDatabaseTab = useUIStore((s) => s.activeDatabaseTab);
   const openTab = useTabStore((s) => s.openTab);
   const savedQueries = useQueryStore((s) => s.queries);
@@ -23,8 +19,6 @@ export function ServerSidebar({
   const queriesLoaded = useQueryStore((s) => s.loaded);
   const removeQuery = useQueryStore((s) => s.removeQuery);
 
-  const [connectionDialogOpen, setConnectionDialogOpen] = React.useState(false);
-  const [databaseDialogOpen, setDatabaseDialogOpen] = React.useState(false);
   const [selectedQueryId, setSelectedQueryId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -35,15 +29,6 @@ export function ServerSidebar({
 
   return (
     <div className="flex h-full flex-col border-r border-sidebar-border bg-sidebar select-none">
-      <div className="flex items-center gap-1.5 border-b border-sidebar-border px-2 py-2">
-        <Button variant="outline" size="sm" className="h-7 flex-1 justify-start gap-1.5 text-xs font-mono" onClick={() => setConnectionDialogOpen(true)}>
-          <Server className="h-3.5 w-3.5" /> Connection
-        </Button>
-        <Button variant="outline" size="sm" className="h-7 flex-1 justify-start gap-1.5 text-xs font-mono" disabled={!activeServerFp} onClick={() => setDatabaseDialogOpen(true)}>
-          <Database className="h-3.5 w-3.5" /> Databases
-        </Button>
-      </div>
-
       <OpenDatabaseTabs onEditConnection={onEditConnection} />
 
       <div className="flex-1 overflow-y-auto overflow-x-auto">
@@ -105,9 +90,6 @@ export function ServerSidebar({
           </div>
         )}
       </div>
-
-      <ConnectionPickerDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} onEditConnection={onEditConnection} />
-      <DatabasePickerDialog open={databaseDialogOpen} onOpenChange={setDatabaseDialogOpen} />
     </div>
   );
 }

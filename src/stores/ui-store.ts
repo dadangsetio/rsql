@@ -33,6 +33,8 @@ interface UIState {
   activeServerFp: string | null;
   openDatabaseTabs: string[];
   activeDatabaseTab: string | null;
+  connectionPickerOpen: boolean;
+  databasePickerOpen: boolean;
 
   toggleTheme: () => void;
   setTheme: (theme: "light" | "dark") => void;
@@ -49,6 +51,8 @@ interface UIState {
   openDatabaseTab: (projectId: string) => void;
   closeDatabaseTab: (projectId: string) => void;
   setActiveDatabaseTab: (projectId: string) => void;
+  setConnectionPickerOpen: (open: boolean) => void;
+  setDatabasePickerOpen: (open: boolean) => void;
 }
 
 const PANEL_POSITION_CYCLE = ["bottom", "right", "top", "left"] as const;
@@ -68,6 +72,8 @@ export const useUIStore = create<UIState>()(
     activeServerFp: null,
     openDatabaseTabs: [],
     activeDatabaseTab: null,
+    connectionPickerOpen: false,
+    databasePickerOpen: false,
 
     toggleTheme: () => {
       set((s) => {
@@ -156,5 +162,8 @@ export const useUIStore = create<UIState>()(
       });
       useProjectStore.setState((s) => ({ status: { ...s.status, [projectId]: ProjectConnectionStatus.Disconnected } }));
     },
+
+    setConnectionPickerOpen: (open) => set({ connectionPickerOpen: open }),
+    setDatabasePickerOpen: (open) => set({ databasePickerOpen: open }),
   })),
 );
