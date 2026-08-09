@@ -53,6 +53,7 @@ interface UIState {
   setActiveDatabaseTab: (projectId: string) => void;
   setConnectionPickerOpen: (open: boolean) => void;
   setDatabasePickerOpen: (open: boolean) => void;
+  renameOpenDatabaseTab: (oldId: string, newId: string) => void;
 }
 
 const PANEL_POSITION_CYCLE = ["bottom", "right", "top", "left"] as const;
@@ -165,5 +166,11 @@ export const useUIStore = create<UIState>()(
 
     setConnectionPickerOpen: (open) => set({ connectionPickerOpen: open }),
     setDatabasePickerOpen: (open) => set({ databasePickerOpen: open }),
+
+    renameOpenDatabaseTab: (oldId, newId) => set((s) => {
+      const idx = s.openDatabaseTabs.indexOf(oldId);
+      if (idx !== -1) s.openDatabaseTabs[idx] = newId;
+      if (s.activeDatabaseTab === oldId) s.activeDatabaseTab = newId;
+    }),
   })),
 );

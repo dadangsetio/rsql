@@ -208,7 +208,6 @@ export function ConnectionModal({ open, onOpenChange, onSave, editData }: Connec
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="production-db"
               required
-              disabled={isEditing}
               className="bg-input/80 border-border/50 text-foreground font-mono text-sm rounded-lg"
             />
           </div>

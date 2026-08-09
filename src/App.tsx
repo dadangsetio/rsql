@@ -20,6 +20,7 @@ import { EditorToolbar } from "@/components/editor-toolbar";
 import { StatusBar } from "@/components/status-bar";
 import { CommandPalette } from "@/components/command-palette";
 import { DriverFactory } from "@/lib/database-driver";
+import { serverFingerprint } from "@/lib/server-groups";
 import { checkForUpdates, startBackgroundUpdateCheck } from "@/lib/updater";
 import * as virtualCache from "@/lib/virtual-cache";
 import { useProjectStore } from "@/stores/project-store";
@@ -78,6 +79,7 @@ export default function App() {
   const projects = useProjectStore((s) => s.projects);
   const saveConnection = useProjectStore((s) => s.saveConnection);
   const updateConnection = useProjectStore((s) => s.updateConnection);
+  const deleteProject = useProjectStore((s) => s.deleteProject);
 
   const selectedTabIndex = useTabStore((s) => s.selectedTabIndex);
   const activeTab = useActiveTab();
@@ -396,12 +398,22 @@ export default function App() {
       };
       if (editingConnection) {
         await updateConnection(connection.name, details);
+        if (connection.name !== editingConnection.name) {
+          useUIStore.getState().renameOpenDatabaseTab(editingConnection.name, connection.name);
+          await deleteProject(editingConnection.name);
+        }
         setEditingConnection(null);
       } else {
         await saveConnection(connection.name, details);
+        const ui = useUIStore.getState();
+        ui.setConnectionModalOpen(false);
+        ui.setConnectionPickerOpen(false);
+        ui.setDatabasePickerOpen(false);
+        ui.setActiveServerFp(serverFingerprint(details));
+        ui.openDatabaseTab(connection.name);
       }
     },
-    [saveConnection, updateConnection, editingConnection],
+    [saveConnection, updateConnection, deleteProject, editingConnection],
   );
 
   const handleEditConnection = useCallback(
