@@ -109,7 +109,11 @@ jobs:
           has_linux_signing=false
           if [ "$PLATFORM" = "ubuntu-22.04" ]; then
             if [ -n "$TAURI_SIGNING_RPM_KEY" ] && [ -n "$APPIMAGETOOL_SIGN_PASSPHRASE" ]; then
-              has_linux_signing=true
+              if printf '%s' "$TAURI_SIGNING_RPM_KEY" | gpg --batch --dearmor > /dev/null 2>&1; then
+                has_linux_signing=true
+              else
+                echo "::warning::TAURI_SIGNING_RPM_KEY is not a valid ASCII-armored PGP key, building unsigned AppImage/RPM."
+              fi
             else
               echo "::warning::Linux signing secrets missing, building unsigned AppImage/RPM."
             fi
@@ -206,8 +210,8 @@ jobs:
           APPIMAGETOOL_FORCE_SIGN: ${{ steps.sign_check.outputs.has_linux_signing == 'true' && '1' || '' }}
           SIGN_KEY: ${{ secrets.SIGN_KEY }}
           APPIMAGETOOL_SIGN_PASSPHRASE: ${{ secrets.APPIMAGETOOL_SIGN_PASSPHRASE }}
-          TAURI_SIGNING_RPM_KEY: ${{ secrets.TAURI_SIGNING_RPM_KEY }}
-          TAURI_SIGNING_RPM_KEY_PASSPHRASE: ${{ secrets.TAURI_SIGNING_RPM_KEY_PASSPHRASE }}
+          TAURI_SIGNING_RPM_KEY: ${{ steps.sign_check.outputs.has_linux_signing == 'true' && secrets.TAURI_SIGNING_RPM_KEY || '' }}
+          TAURI_SIGNING_RPM_KEY_PASSPHRASE: ${{ steps.sign_check.outputs.has_linux_signing == 'true' && secrets.TAURI_SIGNING_RPM_KEY_PASSPHRASE || '' }}
         with:
           tagName: ${{ steps.release_meta.outputs.tag }}
           releaseName: "RSQL ${{ steps.release_meta.outputs.tag }}"
