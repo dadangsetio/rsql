@@ -4,6 +4,7 @@ import { changesSchema } from "@/lib/ddl-detect";
 import { isQueryCancelledError, notifyQueryComplete, PAGE_SIZE } from "@/lib/query-helpers";
 import * as virtualCache from "@/lib/virtual-cache";
 import { decodeColumns, decodePage, decodeResult } from "@/lib/wire";
+import { useActivityStore } from "@/stores/activity-store";
 import { useHistoryStore } from "@/stores/history-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useSchemaIndexStore } from "@/stores/schema-index-store";
@@ -12,6 +13,16 @@ import { useUIStore } from "@/stores/ui-store";
 
 interface UseQueryLifecycleArgs {
   setCommandPaletteOpen: (updater: (v: boolean) => boolean) => void;
+}
+
+function logQuerySuccess(database: string, rowCount: number, elapsed: number, sql: string) {
+  useActivityStore
+    .getState()
+    .log(
+      "success",
+      `Query on ${database}: ${rowCount.toLocaleString()} rows in ${elapsed.toFixed(0)}ms`,
+      sql.trim(),
+    );
 }
 
 export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleArgs) {
@@ -87,6 +98,7 @@ export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleAr
             success: true,
             timestamp: startTime,
           });
+          logQuerySuccess(d.database, rows.length, elapsed, tab.editorValue);
         } else {
           const columns = decodeColumns(colsPacked);
           const firstPage = decodePage(pagePacked);
@@ -118,6 +130,7 @@ export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleAr
             success: true,
             timestamp: startTime,
           });
+          logQuerySuccess(d.database, totalRows, elapsed, tab.editorValue);
         }
       } else {
         const [cols, rows, time] = await driver.runQuery(
@@ -137,6 +150,7 @@ export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleAr
           success: true,
           timestamp: startTime,
         });
+        logQuerySuccess(d.database, rows.length, time, tab.editorValue);
       }
     } catch (err: any) {
       const elapsed = Date.now() - startTime;
@@ -160,6 +174,15 @@ export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleAr
         error: cancelled ? "Query cancelled" : errorMsg,
         timestamp: startTime,
       });
+      if (!cancelled) {
+        useActivityStore
+          .getState()
+          .log(
+            "error",
+            `Query failed on ${d.database}: ${errorMsg}`,
+            `SQL:\n${tab.editorValue.trim()}\n\nError:\n${errorMsg}`,
+          );
+      }
     } finally {
       // Without this a failure inside the error path would leave the tab
       // spinning on "Executing query..." with no way back.

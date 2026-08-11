@@ -28,7 +28,7 @@ export function unpackResult(packed: string, time: number): WireQueryResult {
   const { columns, rows } = decodeResult(packed);
   return [columns, rows, time];
 }
-export type WireColumnDetail = [string, string, boolean, string | null];
+export type WireColumnDetail = [string, string, boolean, string | null, string];
 export type WireIndexDetail = [string, string, boolean, boolean];
 export type WireConstraintDetail = [string, string, string];
 export type WireTriggerDetail = [string, string, string];
@@ -176,11 +176,12 @@ export interface DatabaseDriver {
 }
 
 export function parseColumnDetails(wire: WireColumnDetail[]): ColumnDetail[] {
-  return wire.map(([name, dataType, nullable, defaultValue]) => ({
+  return wire.map(([name, dataType, nullable, defaultValue, udtName]) => ({
     name,
     dataType,
     nullable,
     defaultValue,
+    udtName,
   }));
 }
 

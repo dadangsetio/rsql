@@ -6,7 +6,9 @@ import { useProjectStore } from "@/stores/project-store";
 import { useActiveTab } from "@/stores/tab-store";
 import { useUIStore } from "@/stores/ui-store";
 import { ExplainPanel } from "../explain-panel";
+import { FilterBar } from "../filter-bar";
 import { QueryHistory } from "../query-history";
+import { RelationPickerModal } from "../relation-picker-modal";
 import { ResultsGrid } from "../results-grid";
 import { ResultsMap } from "../results-map";
 import { ResultsRecord } from "../results-record";
@@ -14,6 +16,7 @@ import { DiffView } from "./diff-view";
 import { ResultsToolbar } from "./toolbar";
 import type { PanelView } from "./types";
 import { useEditMode } from "./use-edit-mode";
+import { useFilterSort } from "./use-filter-sort";
 import { useVirtualPaging } from "./use-virtual-paging";
 
 export function ResultsPanel() {
@@ -66,8 +69,11 @@ export function ResultsPanel() {
     sessionMatchesEditor,
     editableTable,
     fkMap,
+    columnTypes,
+    filterColumnKinds,
     editedCells,
     deletedRowIndices,
+    handleUndo,
     handleFKNavigate,
     handleEnterEdit,
     handleDiscard,
@@ -93,10 +99,55 @@ export function ResultsPanel() {
     );
   }, [result, debouncedSearch, isEditing]);
 
+  const {
+    filterState,
+    hasActiveFilter,
+    filterError,
+    setFilterError,
+    handleFilterChange,
+    applyFilter,
+    handleSortColumn,
+    toggleFilterBar,
+  } = useFilterSort({
+    tabId: activeTab?.id,
+    filter: activeTab?.filter,
+    result,
+    editableTable,
+    filterColumnKinds,
+    panelView,
+  });
+
+  // Relation picker — opened by double-clicking (or Enter/Space on) an editable FK cell.
+  const [fkPicker, setFkPicker] = useState<{ rowIndex: number; colIndex: number } | null>(null);
+  const handleFKPickerOpen = useCallback((rowIndex: number, colIndex: number) => {
+    setFkPicker({ rowIndex, colIndex });
+  }, []);
+
+  const fkPickerInfo = useMemo(() => {
+    if (!fkPicker || !result || !activeTab?.projectId) return null;
+    const colName = result.columns[fkPicker.colIndex];
+    const target = fkMap.get(colName);
+    if (!target) return null;
+    const key = `${fkPicker.rowIndex}:${fkPicker.colIndex}`;
+    const currentValue =
+      editedCells.get(key) ?? result.rows[fkPicker.rowIndex]?.[fkPicker.colIndex] ?? "";
+    const nullable = columnTypes.get(colName)?.nullable ?? true;
+    return {
+      rowIndex: fkPicker.rowIndex,
+      colIndex: fkPicker.colIndex,
+      ...target,
+      currentValue,
+      nullable,
+    };
+  }, [fkPicker, result, activeTab?.projectId, fkMap, editedCells, columnTypes]);
+
   const explainResult = activeTab?.explainResult;
   const hasExplain = !!explainResult;
 
   const toolbarProps = {
+    filterOpen: filterState.open,
+    hasActiveFilter,
+    onToggleFilter: toggleFilterBar,
     panelView,
     setPanelView,
     searchTerm,
@@ -230,6 +281,29 @@ export function ResultsPanel() {
         filteredRows={filteredRows}
         filteredCount={filteredRows.length}
       />
+      {filterState.open && (
+        <FilterBar
+          state={filterState}
+          onChange={handleFilterChange}
+          onApply={applyFilter}
+          columns={result.columns}
+          columnKinds={filterColumnKinds}
+          builderAvailable={!!editableTable}
+        />
+      )}
+      {filterError && (
+        <div className="flex items-center gap-2 px-4 py-1.5 bg-destructive/10 text-destructive text-xs border-b border-border">
+          <XCircle className="h-3 w-3" />
+          {filterError}
+          <button
+            type="button"
+            onClick={() => setFilterError(null)}
+            className="ml-auto hover:text-foreground"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
       {editError && !isEditing && (
         <div className="flex items-center gap-2 px-4 py-1.5 bg-destructive/10 text-destructive text-xs border-b border-border">
           <XCircle className="h-3 w-3" />
@@ -249,13 +323,19 @@ export function ResultsPanel() {
           columns={result.columns}
           rows={filteredRows}
           isEditing={isEditing}
+          editable={!!editableTable && !vq}
           cellEdits={editedCells}
           deletedRows={deletedRowIndices}
+          columnTypes={columnTypes}
           onCellEdit={handleCellEdit}
           onRowDelete={handleRowDelete}
           onRowRestore={handleRowRestore}
+          onUndo={handleUndo}
           fkColumns={fkMap}
           onFKNavigate={handleFKNavigate}
+          onFKPickerOpen={handleFKPickerOpen}
+          sort={activeTab?.sort}
+          onSortColumn={handleSortColumn}
           virtualQuery={vq}
           onPageNeeded={vq ? handlePageNeeded : undefined}
           onViewportRowChange={vq ? handleViewportRowChange : undefined}
@@ -265,6 +345,24 @@ export function ResultsPanel() {
         />
       ) : (
         <ResultsRecord columns={result.columns} rows={filteredRows} />
+      )}
+      {fkPickerInfo && activeTab?.projectId && (
+        <RelationPickerModal
+          open
+          onOpenChange={(v) => {
+            if (!v) setFkPicker(null);
+          }}
+          projectId={activeTab.projectId}
+          schema={fkPickerInfo.schema}
+          table={fkPickerInfo.table}
+          column={fkPickerInfo.column}
+          nullable={fkPickerInfo.nullable}
+          currentValue={fkPickerInfo.currentValue}
+          onSelect={(value) => {
+            handleCellEdit(fkPickerInfo.rowIndex, fkPickerInfo.colIndex, value);
+            setFkPicker(null);
+          }}
+        />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 import { toast } from "sonner";
 import type { StateCreator } from "zustand";
 import { DriverFactory } from "@/lib/database-driver";
+import { useActivityStore } from "@/stores/activity-store";
 import { useSchemaIndexStore } from "@/stores/schema-index-store";
 import { ProjectConnectionStatus as PCS } from "@/types";
 import type { ProjectState } from "./index";
@@ -46,6 +47,7 @@ export const createConnectionSlice: StateCreator<
       });
 
       if (st === PCS.Connected) {
+        useActivityStore.getState().log("success", `Connected to ${d.database} (${projectId})`);
         const [sc, dbs, tsp] = await Promise.allSettled([
           driver.loadSchemas(projectId),
           driver.loadDatabases?.(projectId),
@@ -78,6 +80,9 @@ export const createConnectionSlice: StateCreator<
         description: msg,
         duration: 10000,
       });
+      useActivityStore
+        .getState()
+        .log("error", `Connection failed: ${d?.database || projectId}`, msg);
     }
   },
 
@@ -158,8 +163,15 @@ export const createConnectionSlice: StateCreator<
       );
 
       toast.success("Connection refreshed");
-    } catch {
+      useActivityStore
+        .getState()
+        .log("success", `Refreshed connection: ${d.database} (${projectId})`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       toast.error("Failed to refresh connection data");
+      useActivityStore
+        .getState()
+        .log("error", `Failed to refresh connection: ${d.database} (${projectId})`, msg);
     }
   },
 });

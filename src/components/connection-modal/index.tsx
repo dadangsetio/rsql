@@ -191,7 +191,6 @@ export function ConnectionModal({ open, onOpenChange, onSave, editData }: Connec
           <NameField
             value={formData.name}
             onChange={(value) => setFormData({ ...formData, name: value })}
-            disabled={isEditing}
           />
 
           <HostPortFields

@@ -167,6 +167,56 @@
   border-radius: 6px;
 }
 
+/* Type-aware cell editors: enum dropdown / date-time picker overlay.
+   The overlay container glide renders us into sizes itself with `width: max-content`
+   (see @glideapps/glide-data-grid's data-grid-overlay-editor-style.css) and only a
+   `min-width` equal to the cell's own width — so `width: 100%` here would collapse
+   back down to that (often narrow) cell width and clip the Now button. Fixed pixel
+   widths give the overlay real content to size around instead. */
+.typed-edit-select {
+    width: 200px;
+    height: 30px;
+    padding: 0 8px;
+    border: none;
+    outline: none;
+    background: var(--background);
+    color: var(--foreground);
+    font: inherit;
+}
+.typed-edit-datetime {
+    display: flex;
+    align-items: center;
+    height: 30px;
+    background: var(--background);
+}
+.typed-edit-datetime input {
+    width: 180px;
+    height: 100%;
+    padding: 0 8px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--foreground);
+    font: inherit;
+}
+.typed-edit-datetime button {
+    flex: none;
+    width: 44px;
+    height: 100%;
+    padding: 0;
+    border: none;
+    border-left: 1px solid var(--border);
+    background: var(--muted);
+    color: var(--foreground);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+}
+.typed-edit-datetime button:hover {
+    background: var(--primary);
+    color: var(--primary-foreground);
+}
+
 /* cmdk command palette */
 .cmdk-overlay {
   position: fixed;

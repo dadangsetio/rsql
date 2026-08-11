@@ -36,3 +36,21 @@ query_db/
 
 # Agent working notes
 docs/superpowers/
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+
+# Codex local configuration
+.codex/
+
+# AI tool runtime/config (local machine state, not project source)
+.agents/
+.claude-flow/
+.mcp.json
+.swarm/
+graphify-out/
+AGENTS.md
+CLAUDE.md
+GEMINI.md

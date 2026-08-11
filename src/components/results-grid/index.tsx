@@ -1,14 +1,17 @@
 import DataEditor, {
+  type CellClickedEventArgs,
   CompactSelection,
   type DataEditorRef,
   type EditableGridCell,
   type GridCell,
   GridCellKind,
   type GridColumn,
+  type GridKeyEventArgs,
   type GridSelection,
   type Item,
   type Theme,
 } from "@glideapps/glide-data-grid";
+import { ExternalLink, Pencil } from "lucide-react";
 import {
   type MutableRefObject,
   useCallback,
@@ -19,10 +22,18 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import "@glideapps/glide-data-grid/dist/index.css";
+import type { ColumnEditInfo } from "@/lib/column-edit-kind";
 import type { CellValue } from "@/lib/wire";
 import { useUIStore } from "@/stores/ui-store";
-import type { VirtualQuery } from "@/types";
+import type { SortState, VirtualQuery } from "@/types";
+import {
+  FK_ARROW_ZONE_WIDTH,
+  fkCellRenderer,
+  type TypedEditCell,
+  typedEditCellRenderer,
+} from "../results-grid-typed-cell";
 import {
   buildCellContent,
   buildGridTheme,
@@ -37,14 +48,33 @@ import {
 interface ResultsGridProps {
   columns: string[];
   rows: CellValue[][];
+  /** Maps a displayed row's position (e.g. after search filtering) back to its index
+   * in the unfiltered result — cellEdits/deletedRows/onCellEdit/onRowDelete/onRowRestore
+   * all key off that original index. Omit when `rows` is already the unfiltered set. */
+  rowIndexMap?: number[];
   isEditing?: boolean;
+  /** When true (and not isEditing), plain cells can still be double-clicked to edit a single value directly. */
+  editable?: boolean;
   cellEdits?: Map<string, string>;
   deletedRows?: Set<number>;
-  onCellEdit?: (rowIndex: number, colIndex: number, value: string) => void;
+  /** Column name -> how to edit it (enum dropdown, date/timestamp picker, boolean toggle). */
+  columnTypes?: Map<string, ColumnEditInfo>;
+  onCellEdit?: (rowIndex: number, colIndex: number, value: CellValue) => void;
   onRowDelete?: (rowIndex: number) => void;
   onRowRestore?: (rowIndex: number) => void;
+  /** Ctrl/Cmd+Z — undo the last cell edit or row delete/restore. */
+  onUndo?: () => void;
   fkColumns?: Map<string, { schema: string; table: string; column: string }>;
   onFKNavigate?: (colName: string, value: string) => void;
+  /** Double-click (or Enter/Space) on an FK cell while editable — opens the relation picker instead of a plain text editor. */
+  onFKPickerOpen?: (rowIndex: number, colIndex: number) => void;
+  /** Clicking any cell (outside the FK arrow hotspot) while the grid isn't editing/editable — lets a
+   *  read-only grid double as a row picker (e.g. the relation picker modal). */
+  onRowClick?: (rowIndex: number) => void;
+  /** Current column sort (persisted on the tab), shown as an arrow in the header title. */
+  sort?: SortState;
+  /** Clicking a column header — cycles that column asc -> desc -> unsorted. */
+  onSortColumn?: (colIndex: number) => void;
   virtualQuery?: VirtualQuery;
   onPageNeeded?: (pageIndex: number) => void;
   onViewportRowChange?: (topRow: number) => void;
@@ -53,17 +83,37 @@ interface ResultsGridProps {
   gridRef?: MutableRefObject<{ invalidatePage: (pageIndex: number) => void } | null>;
 }
 
+function cellToCopyText(cell: GridCell): string {
+  if (cell.copyData !== undefined) return cell.copyData;
+  if (cell.kind === GridCellKind.Boolean) {
+    return cell.data === true ? "true" : cell.data === false ? "false" : "";
+  }
+  return "data" in cell ? String(cell.data ?? "") : "";
+}
+
+function csvEscape(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
 export function ResultsGrid({
   columns,
   rows,
+  rowIndexMap,
   isEditing,
+  editable,
   cellEdits,
   deletedRows,
+  columnTypes,
   onCellEdit,
   onRowDelete,
   onRowRestore,
+  onUndo,
   fkColumns,
   onFKNavigate,
+  onFKPickerOpen,
+  onRowClick,
+  sort,
+  onSortColumn,
   virtualQuery,
   onPageNeeded,
   onViewportRowChange,
@@ -133,8 +183,14 @@ export function ResultsGrid({
   }, []);
 
   const gridColumns = useMemo(
-    (): GridColumn[] => computeGridColumns(columns, rows),
-    [columns, rows],
+    (): GridColumn[] => computeGridColumns(columns, rows, sort),
+    [columns, rows, sort],
+  );
+
+  // Per-column edit widget kind, aligned to `columns` — undefined means plain text.
+  const colEditInfo = useMemo(
+    () => columns.map((col) => columnTypes?.get(col)),
+    [columns, columnTypes],
   );
 
   const fkColIndices = useMemo(() => computeFkColIndices(columns, fkColumns), [columns, fkColumns]);
@@ -163,9 +219,12 @@ export function ResultsGrid({
     (cell: Item): GridCell =>
       buildCellContent(cell, {
         rows,
+        rowIndexMap,
         cellEdits,
         deletedRows,
         isEditing,
+        editable,
+        colEditInfo,
         fkColIndices,
         virtualQuery,
         onPageNeeded,
@@ -176,9 +235,12 @@ export function ResultsGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       rows,
+      rowIndexMap,
       cellEdits,
       deletedRows,
       isEditing,
+      editable,
+      colEditInfo,
       fkColIndices,
       virtualQuery,
       onPageNeeded,
@@ -220,71 +282,206 @@ export function ResultsGrid({
 
   const onCellEdited = useCallback(
     (cell: Item, newVal: EditableGridCell) => {
-      if (newVal.kind !== GridCellKind.Text) return;
       const [colIdx, rowIdx] = cell;
-      onCellEdit?.(rowIdx, colIdx, newVal.data);
+      let value: CellValue | undefined;
+      if (newVal.kind === GridCellKind.Text) {
+        // Clearing a nullable cell means SQL NULL, not the empty-string literal. This has to
+        // be a real null: the commit path parameterises values, so the string "null" would be
+        // written as the four-character text instead of NULL.
+        value = newVal.data === "" && colEditInfo[colIdx]?.nullable ? null : newVal.data;
+      } else if (newVal.kind === GridCellKind.Boolean) {
+        value = newVal.data === true ? "t" : newVal.data === false ? "f" : null;
+      } else if (newVal.kind === GridCellKind.Custom) {
+        value = (newVal as TypedEditCell).data.value;
+      }
+      if (value === undefined) return;
+      onCellEdit?.(rowIndexMap ? rowIndexMap[rowIdx] : rowIdx, colIdx, value);
     },
-    [onCellEdit],
+    [onCellEdit, rowIndexMap, colEditInfo],
   );
 
-  const handleRowClick = useCallback(
-    (cell: Item) => {
-      if (isEditing || virtualQuery) return;
-      const [colIdx, rowIdx] = cell;
+  // Tracks whether the most recent click on an FK cell landed in its arrow hotspot — read by
+  // handleCellActivated so a double-click on the arrow navigates once instead of also opening
+  // the edit picker (the two actions would otherwise fire together on that second click).
+  const lastFKClickRef = useRef({ col: -1, row: -1, inArrow: false });
 
-      if (fkColIndices.has(colIdx) && onFKNavigate) {
-        const colName = columns[colIdx];
-        const value = rows[rowIdx]?.[colIdx];
-        if (value) {
-          onFKNavigate(colName, value);
+  // FK cell click: only the reserved arrow zone at the cell's right edge navigates to the
+  // referenced row (see FK_ARROW_ZONE_WIDTH) — clicking the value text just selects, same as
+  // any other cell. Any other click, when the grid is read-only and `onRowClick` is wired up,
+  // picks that row instead — this is how a plain view-only grid doubles as a picker.
+  const handleRowClick = useCallback(
+    (cell: Item, event: CellClickedEventArgs) => {
+      const [colIdx, rowIdx] = cell;
+      if (fkColIndices.has(colIdx)) {
+        const inArrow = event.localEventX >= event.bounds.width - FK_ARROW_ZONE_WIDTH;
+        lastFKClickRef.current = { col: colIdx, row: rowIdx, inArrow };
+        if (inArrow && !virtualQuery && onFKNavigate) {
+          const colName = columns[colIdx];
+          const value = rows[rowIdx]?.[colIdx];
+          if (value) onFKNavigate(colName, value);
+          return;
         }
       }
+
+      if (onRowClick && !isEditing && !editable && !virtualQuery) {
+        onRowClick(rowIndexMap ? rowIndexMap[rowIdx] : rowIdx);
+      }
     },
-    [isEditing, virtualQuery, fkColIndices, onFKNavigate, columns, rows],
+    [
+      fkColIndices,
+      virtualQuery,
+      onFKNavigate,
+      columns,
+      rows,
+      onRowClick,
+      isEditing,
+      editable,
+      rowIndexMap,
+    ],
   );
+
+  // Cell activate (double-click / Enter / Space) on an editable FK cell → open the relation
+  // picker instead of the plain text editor. Skipped if the triggering click landed on the
+  // arrow hotspot — that click already navigated, and shouldn't also pop the picker open.
+  const handleCellActivated = useCallback(
+    (cell: Item) => {
+      if (virtualQuery || !onFKPickerOpen || (!isEditing && !editable)) return;
+      const [colIdx, rowIdx] = cell;
+      if (!fkColIndices.has(colIdx)) return;
+      const last = lastFKClickRef.current;
+      if (last.col === colIdx && last.row === rowIdx && last.inArrow) return;
+      const trueRowIdx = rowIndexMap ? rowIndexMap[rowIdx] : rowIdx;
+      if (deletedRows?.has(trueRowIdx)) return;
+      onFKPickerOpen(trueRowIdx, colIdx);
+    },
+    [virtualQuery, onFKPickerOpen, isEditing, editable, fkColIndices, rowIndexMap, deletedRows],
+  );
+
+  // Right-click on an FK cell → small menu offering both actions explicitly, instead of relying
+  // solely on the arrow hotspot / double-click gestures.
+  const [fkMenu, setFkMenu] = useState<{
+    x: number;
+    y: number;
+    rowIndex: number;
+    colIndex: number;
+    colName: string;
+    value: string;
+  } | null>(null);
+
+  const handleCellContextMenu = useCallback(
+    (cell: Item, event: CellClickedEventArgs) => {
+      if (virtualQuery) return;
+      const [colIdx, rowIdx] = cell;
+      if (!fkColIndices.has(colIdx)) return;
+      event.preventDefault();
+      setFkMenu({
+        x: event.bounds.x + event.localEventX,
+        y: event.bounds.y + event.localEventY,
+        rowIndex: rowIdx,
+        colIndex: colIdx,
+        colName: columns[colIdx],
+        value: rows[rowIdx]?.[colIdx] ?? "",
+      });
+    },
+    [virtualQuery, fkColIndices, columns, rows],
+  );
+
+  const closeFkMenu = useCallback(() => setFkMenu(null), []);
+
+  const fkMenuCanEdit =
+    !!onFKPickerOpen &&
+    (!!isEditing || !!editable) &&
+    !deletedRows?.has(fkMenu ? (rowIndexMap ? rowIndexMap[fkMenu.rowIndex] : fkMenu.rowIndex) : -1);
+  const fkMenuCanOpen = !!onFKNavigate && !!fkMenu && fkMenu.value !== "";
 
   const gridTheme = useMemo((): Partial<Theme> => buildGridTheme(theme), [theme]);
 
-  const rowMarkers = isEditing ? ("checkbox-visible" as const) : ("none" as const);
   const [selection, setSelection] = useState<GridSelection>({
     rows: CompactSelection.empty(),
     columns: CompactSelection.empty(),
   });
 
-  useEffect(() => {
-    if (!isEditing) {
-      setSelection({ rows: CompactSelection.empty(), columns: CompactSelection.empty() });
+  // A click anywhere in a row selects the whole row (not just the clicked cell),
+  // so a single click is enough to target a row for keyboard delete.
+  const handleSelectionChange = useCallback((newSel: GridSelection) => {
+    if (!newSel.current) {
+      setSelection(newSel);
+      return;
     }
-  }, [isEditing]);
+    const rowIdx = newSel.current.cell[1];
+    setSelection({ ...newSel, rows: CompactSelection.fromSingleSelection(rowIdx) });
+  }, []);
 
-  useEffect(() => {
-    if (!isEditing || !deletedRows) return;
-    let sel = CompactSelection.empty();
-    for (const idx of deletedRows) {
-      sel = sel.add(idx);
-    }
-    setSelection((prev) => ({ ...prev, rows: sel }));
-  }, [isEditing, deletedRows]);
-
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
-
-  const handleSelectionChange = useCallback(
-    (newSel: GridSelection) => {
-      if (!isEditing) return;
-      const oldRows = selectionRef.current.rows;
-      const newRows = newSel.rows;
-
-      for (let i = 0; i < rows.length; i++) {
-        const wasSelected = oldRows.hasIndex(i);
-        const isSelected = newRows.hasIndex(i);
-        if (isSelected && !wasSelected) onRowDelete?.(i);
-        if (!isSelected && wasSelected) onRowRestore?.(i);
+  // Delete/Backspace on selected rows stages them for deletion (pressing again restores them);
+  // Ctrl/Cmd+Z undoes the last edit or delete/restore. Both are skipped while a cell's value
+  // editor has focus, so they never hijack normal text editing inside the open cell overlay.
+  const handleGridKeyDown = useCallback(
+    (event: GridKeyEventArgs) => {
+      const target = event.rawEvent?.target as HTMLElement | undefined;
+      if (
+        target &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
       }
 
-      setSelection(newSel);
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        if (!onUndo) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.cancel(); // stop glide's own keybinding handling from also running
+        onUndo();
+        return;
+      }
+
+      // Cmd/Ctrl+C: override glide's default TSV clipboard copy with CSV, so pasting
+      // outside the app lands as a real .csv snippet. Ctrl/Cmd-dragging adds extra disjoint
+      // rectangles (rangeStack); each becomes its own CSV block, since they can differ in shape.
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+        if (!selection.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.cancel();
+        const ranges = [...selection.current.rangeStack, selection.current.range];
+        const blocks = ranges.map((range) => {
+          const lines: string[] = [];
+          for (let r = range.y; r < range.y + range.height; r++) {
+            const line: string[] = [];
+            for (let c = range.x; c < range.x + range.width; c++) {
+              line.push(csvEscape(cellToCopyText(getCellContent([c, r]))));
+            }
+            lines.push(line.join(","));
+          }
+          return lines.join("\n");
+        });
+        void navigator.clipboard.writeText(blocks.join("\n\n"));
+        return;
+      }
+
+      if (virtualQuery || selection.rows.length === 0) return;
+      if (event.key !== "Delete" && event.key !== "Backspace") return;
+      event.preventDefault();
+      event.stopPropagation();
+      // Without this, glide's built-in "delete" keybinding runs right after ours and
+      // clears the selected cell/range content — which reads back as a blanked value
+      // on top of (or instead of) our red "deleted row" tint.
+      event.cancel();
+      for (const rowIdx of selection.rows) {
+        const trueRowIdx = rowIndexMap ? rowIndexMap[rowIdx] : rowIdx;
+        if (deletedRows?.has(trueRowIdx)) onRowRestore?.(trueRowIdx);
+        else onRowDelete?.(trueRowIdx);
+      }
     },
-    [isEditing, rows.length, onRowDelete, onRowRestore],
+    [
+      virtualQuery,
+      selection,
+      deletedRows,
+      onRowDelete,
+      onRowRestore,
+      onUndo,
+      rowIndexMap,
+      getCellContent,
+    ],
   );
 
   return (
@@ -294,18 +491,23 @@ export function ResultsGrid({
         columns={gridColumns}
         rows={totalRowCount}
         getCellContent={getCellContent}
-        onCellEdited={isEditing ? onCellEdited : undefined}
+        onCellEdited={isEditing || editable ? onCellEdited : undefined}
         onCellClicked={handleRowClick}
+        onHeaderClicked={onSortColumn}
+        onCellActivated={handleCellActivated}
+        onCellContextMenu={handleCellContextMenu}
+        onKeyDown={handleGridKeyDown}
         onVisibleRegionChanged={handleVisibleRegionChanged}
+        customRenderers={[typedEditCellRenderer, fkCellRenderer]}
         theme={gridTheme}
         width={containerSize.width}
         height={containerSize.height}
         smoothScrollX
         smoothScrollY={!virtualQuery}
         experimental={{ renderStrategy: "direct" }}
-        rowMarkers={rowMarkers}
-        gridSelection={isEditing ? selection : undefined}
-        onGridSelectionChange={isEditing ? handleSelectionChange : undefined}
+        rowMarkers="none"
+        gridSelection={selection}
+        onGridSelectionChange={handleSelectionChange}
         getCellsForSelection={true}
         keybindings={{ search: !virtualQuery }}
         overscrollX={0}
@@ -313,6 +515,60 @@ export function ResultsGrid({
         rowHeight={GRID_ROW_HEIGHT}
         headerHeight={34}
       />
+      {fkMenu &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0"
+              style={{ zIndex: 9998 }}
+              onClick={closeFkMenu}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                closeFkMenu();
+              }}
+            />
+            <div
+              className="fixed min-w-[160px] rounded-md border border-border bg-popover shadow-md py-1"
+              style={{ zIndex: 9999, top: fkMenu.y, left: fkMenu.x }}
+            >
+              {fkMenuCanEdit && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onFKPickerOpen?.(
+                      rowIndexMap ? rowIndexMap[fkMenu.rowIndex] : fkMenu.rowIndex,
+                      fkMenu.colIndex,
+                    );
+                    closeFkMenu();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs font-mono hover:bg-accent transition-colors"
+                >
+                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                  Edit
+                </button>
+              )}
+              {fkMenuCanOpen && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onFKNavigate?.(fkMenu.colName, fkMenu.value);
+                    closeFkMenu();
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs font-mono hover:bg-accent transition-colors"
+                >
+                  <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                  Open relation
+                </button>
+              )}
+              {!fkMenuCanEdit && !fkMenuCanOpen && (
+                <div className="px-3 py-1.5 text-xs font-mono text-muted-foreground">
+                  No actions available
+                </div>
+              )}
+            </div>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -60,3 +60,39 @@ export async function pgsqlTestConnection(
 ): Promise<string> {
   return await invoke<string>("pgsql_test_connection", { key });
 }
+
+export async function backupDatabase(dest_path: string): Promise<void> {
+  await invoke("db_backup", { dest_path });
+}
+
+export async function restoreDatabase(src_path: string): Promise<void> {
+  await invoke("db_restore", { src_path });
+}
+
+export interface PgDumpOptions {
+  format: "custom" | "plain" | "tar";
+  extra_args: string[];
+}
+
+export interface PgRestoreOptions {
+  source_format: "archive" | "plain";
+  extra_args: string[];
+}
+
+export async function pgsqlBackup(
+  project_id: string,
+  dest_path: string,
+  options: PgDumpOptions,
+  job_id: string,
+): Promise<void> {
+  await invoke("pgsql_backup", { project_id, dest_path, options, job_id });
+}
+
+export async function pgsqlRestore(
+  project_id: string,
+  src_path: string,
+  options: PgRestoreOptions,
+  job_id: string,
+): Promise<void> {
+  await invoke("pgsql_restore", { project_id, src_path, options, job_id });
+}

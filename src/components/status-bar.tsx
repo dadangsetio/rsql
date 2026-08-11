@@ -5,6 +5,7 @@ import { useProjectStore } from "@/stores/project-store";
 import { useActiveTab } from "@/stores/tab-store";
 import { getSystemResourceUsage, type SystemResourceUsage } from "@/tauri";
 import { ProjectConnectionStatus } from "@/types";
+import { ActivityLog } from "./activity-log";
 
 export function StatusBar() {
   const activeTab = useActiveTab();
@@ -106,6 +107,7 @@ export function StatusBar() {
         ) : (
           <span>No connection</span>
         )}
+        <ActivityLog />
       </div>
 
       <div className="flex items-center gap-2">

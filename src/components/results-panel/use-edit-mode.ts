@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildEnumLabelMap,
+  type ColumnEditInfo,
+  classifyColumnEditKind,
+} from "@/lib/column-edit-kind";
 import type { ForeignKey } from "@/lib/database-driver";
 import { DriverFactory } from "@/lib/database-driver";
+import { classifyFilterColumnKind, type FilterColumnInfo } from "@/lib/filter-utils";
 import { buildMutations, countPending, emptySession, rowKeys } from "@/lib/mutations";
 import { parseSelectTable, quoteIdent, quoteLiteral } from "@/lib/sql-utils";
 import type { CellValue } from "@/lib/wire";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
 import type { QueryResult } from "@/types";
+
+type UndoEntry =
+  | { type: "cell"; key: string; column: string; previous: CellValue | undefined }
+  | { type: "delete"; key: string; wasDeleted: boolean };
 
 interface UseEditModeArgs {
   tabId: string | undefined;
@@ -49,9 +59,75 @@ export function useEditMode({ tabId, projectId, editorValue, result }: UseEditMo
     [editSession],
   );
 
+  // Inverse of each staged change, newest last — Ctrl/Cmd+Z in the grid pops one.
+  // Kept out of the tab store because it is scratch UI state, not part of what gets committed.
+  const undoStack = useRef<UndoEntry[]>([]);
+  const pushUndo = useCallback((entry: UndoEntry) => {
+    undoStack.current.push(entry);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    if (!tabId) return;
+    const entry = undoStack.current.pop();
+    if (!entry) return;
+    if (entry.type === "cell") {
+      useTabStore.getState().setCellEdit(tabId, entry.key, entry.column, entry.previous);
+    } else {
+      useTabStore.getState().setRowDeleted(tabId, entry.key, entry.wasDeleted);
+    }
+  }, [tabId]);
+
+  // Undo history belongs to one tab's session, so switching tabs starts over.
+  const undoTabRef = useRef(tabId);
+  if (undoTabRef.current !== tabId) {
+    undoTabRef.current = tabId;
+    undoStack.current = [];
+  }
+
   const [fkMap, setFkMap] = useState<
     Map<string, { schema: string; table: string; column: string }>
   >(new Map());
+  const [columnTypes, setColumnTypes] = useState<Map<string, ColumnEditInfo>>(new Map());
+  // Column name -> filter-bar operator bucket. Separate from columnTypes, which lumps
+  // integers into "text" — wrong for filtering, where integers need >/<.
+  const [filterColumnKinds, setFilterColumnKinds] = useState<Map<string, FilterColumnInfo>>(
+    new Map(),
+  );
+
+  useEffect(() => {
+    if (!editableTable || !projectId) {
+      setColumnTypes(new Map());
+      setFilterColumnKinds(new Map());
+      return;
+    }
+    const pid = projectId;
+    const d = useProjectStore.getState().projects[pid];
+    if (!d) return;
+
+    const driver = DriverFactory.getDriver(d.driver);
+    Promise.all([
+      useProjectStore.getState().loadColumnDetails(pid, editableTable.schema, editableTable.table),
+      driver.loadEnumTypes?.(pid) ?? Promise.resolve([]),
+    ])
+      .then(([colDetails, enumRows]) => {
+        const enumLabelMap = buildEnumLabelMap(enumRows);
+        const typeMap = new Map<string, ColumnEditInfo>();
+        const filterKindMap = new Map<string, FilterColumnInfo>();
+        for (const c of colDetails) {
+          typeMap.set(
+            c.name,
+            classifyColumnEditKind(c.dataType, c.udtName, c.nullable, enumLabelMap),
+          );
+          filterKindMap.set(c.name, classifyFilterColumnKind(c.dataType, c.udtName, enumLabelMap));
+        }
+        setColumnTypes(typeMap);
+        setFilterColumnKinds(filterKindMap);
+      })
+      .catch(() => {
+        setColumnTypes(new Map());
+        setFilterColumnKinds(new Map());
+      });
+  }, [editableTable, projectId]);
 
   useEffect(() => {
     if (!editableTable || !projectId) {
@@ -205,7 +281,7 @@ export function useEditMode({ tabId, projectId, editorValue, result }: UseEditMo
   }, [editSession, projectId, tabId, editorValue, handleDiscard]);
 
   const handleCellEdit = useCallback(
-    (rowIndex: number, colIndex: number, value: string) => {
+    (rowIndex: number, colIndex: number, value: CellValue) => {
       if (!tabId || !editSession || !result) return;
       const key = keys[rowIndex];
       if (!key) {
@@ -215,11 +291,13 @@ export function useEditMode({ tabId, projectId, editorValue, result }: UseEditMo
       const column = result.columns[colIndex];
       if (!column) return;
 
-      const original = result.rows[rowIndex]?.[colIndex];
+      const original = result.rows[rowIndex]?.[colIndex] ?? null;
       const next: CellValue | undefined = value === original ? undefined : value;
+      const previous = editSession.edits[key]?.[column];
+      pushUndo({ type: "cell", key, column, previous });
       useTabStore.getState().setCellEdit(tabId, key, column, next);
     },
-    [tabId, editSession, result, keys],
+    [tabId, editSession, result, keys, pushUndo],
   );
 
   const setRowDeleted = useCallback(
@@ -230,9 +308,10 @@ export function useEditMode({ tabId, projectId, editorValue, result }: UseEditMo
         setEditError("This row cannot be identified by its primary key and cannot be deleted.");
         return;
       }
+      pushUndo({ type: "delete", key, wasDeleted: editSession.deletes.includes(key) });
       useTabStore.getState().setRowDeleted(tabId, key, deleted);
     },
-    [tabId, editSession, keys],
+    [tabId, editSession, keys, pushUndo],
   );
 
   const handleRowDelete = useCallback(
@@ -281,8 +360,11 @@ export function useEditMode({ tabId, projectId, editorValue, result }: UseEditMo
     sessionMatchesEditor,
     editableTable,
     fkMap,
+    columnTypes,
+    filterColumnKinds,
     editedCells,
     deletedRowIndices,
+    handleUndo,
     handleFKNavigate,
     handleEnterEdit,
     handleDiscard,

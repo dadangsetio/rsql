@@ -1,7 +1,22 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { CellValue } from "@/lib/wire";
+import { useProjectStore } from "@/stores/project-store";
 import type { QueryResult } from "@/types";
+import { ProjectConnectionStatus } from "@/types";
+
+export function nextActiveTabAfterClose(
+  openTabs: string[],
+  closingPid: string,
+  currentActive: string | null,
+): string | null {
+  if (currentActive !== closingPid) return currentActive;
+  const idx = openTabs.indexOf(closingPid);
+  const remaining = openTabs.filter((pid) => pid !== closingPid);
+  if (remaining.length === 0) return null;
+  const prevIdx = Math.max(0, idx - 1);
+  return remaining[Math.min(prevIdx, remaining.length - 1)];
+}
 
 interface PinnedResult {
   columns: string[];
@@ -12,11 +27,19 @@ interface PinnedResult {
 interface UIState {
   theme: "light" | "dark";
   sidebarWidth: number;
-  editorHeight: number;
+  editorHeightVertical: number;
+  editorHeightHorizontal: number;
   connectionModalOpen: boolean;
   viewMode: "grid" | "record";
   selectedRow: number;
   pinnedResult: PinnedResult | null;
+  editorCollapsed: boolean;
+  editorPosition: "top" | "right" | "bottom" | "left";
+  activeServerFp: string | null;
+  openDatabaseTabs: string[];
+  activeDatabaseTab: string | null;
+  connectionPickerOpen: boolean;
+  databasePickerOpen: boolean;
 
   toggleTheme: () => void;
   setTheme: (theme: "light" | "dark") => void;
@@ -27,17 +50,36 @@ interface UIState {
   setSelectedRow: (row: number | ((prev: number) => number)) => void;
   pinResult: (result: QueryResult, label: string) => void;
   clearPinnedResult: () => void;
+  toggleEditorCollapsed: () => void;
+  cyclePanelPosition: () => void;
+  setActiveServerFp: (fp: string | null) => void;
+  openDatabaseTab: (projectId: string) => void;
+  closeDatabaseTab: (projectId: string) => void;
+  setActiveDatabaseTab: (projectId: string) => void;
+  setConnectionPickerOpen: (open: boolean) => void;
+  setDatabasePickerOpen: (open: boolean) => void;
+  renameOpenDatabaseTab: (oldId: string, newId: string) => void;
 }
 
+const PANEL_POSITION_CYCLE = ["bottom", "right", "top", "left"] as const;
+
 export const useUIStore = create<UIState>()(
-  immer((set) => ({
+  immer((set, get) => ({
     theme: "light",
     sidebarWidth: 280,
-    editorHeight: 50,
+    editorHeightVertical: 50,
+    editorHeightHorizontal: 50,
     connectionModalOpen: false,
     viewMode: "grid",
     selectedRow: 0,
     pinnedResult: null,
+    editorCollapsed: false,
+    editorPosition: "bottom",
+    activeServerFp: null,
+    openDatabaseTabs: [],
+    activeDatabaseTab: null,
+    connectionPickerOpen: false,
+    databasePickerOpen: false,
 
     toggleTheme: () => {
       set((s) => {
@@ -66,10 +108,15 @@ export const useUIStore = create<UIState>()(
     },
 
     setEditorHeight: (delta) => {
-      const containerHeight = window.innerHeight - 48 - 24;
-      const deltaPercent = (delta / containerHeight) * 100;
+      const { editorPosition, sidebarWidth } = get();
+      const isHorizontal = editorPosition === "left" || editorPosition === "right";
+      const containerSize = isHorizontal
+        ? window.innerWidth - sidebarWidth
+        : window.innerHeight - 48 - 24;
+      const deltaPercent = (delta / containerSize) * 100;
       set((s) => {
-        s.editorHeight = Math.max(20, Math.min(80, s.editorHeight + deltaPercent));
+        const key = isHorizontal ? "editorHeightHorizontal" : "editorHeightVertical";
+        s[key] = Math.max(20, Math.min(80, s[key] + deltaPercent));
       });
     },
 
@@ -90,5 +137,58 @@ export const useUIStore = create<UIState>()(
     },
 
     clearPinnedResult: () => set({ pinnedResult: null }),
+
+    toggleEditorCollapsed: () =>
+      set((s) => {
+        s.editorCollapsed = !s.editorCollapsed;
+      }),
+    cyclePanelPosition: () =>
+      set((s) => {
+        const next =
+          PANEL_POSITION_CYCLE[
+            (PANEL_POSITION_CYCLE.indexOf(s.editorPosition) + 1) % PANEL_POSITION_CYCLE.length
+          ];
+        s.editorPosition = next;
+      }),
+
+    setActiveServerFp: (fp) => set({ activeServerFp: fp }),
+
+    setActiveDatabaseTab: (projectId) => set({ activeDatabaseTab: projectId }),
+
+    openDatabaseTab: (projectId) => {
+      set((s) => {
+        if (!s.openDatabaseTabs.includes(projectId)) s.openDatabaseTabs.push(projectId);
+        s.activeDatabaseTab = projectId;
+      });
+      const status = useProjectStore.getState().status[projectId];
+      if (
+        status !== ProjectConnectionStatus.Connected &&
+        status !== ProjectConnectionStatus.Connecting
+      ) {
+        void useProjectStore.getState().connect(projectId);
+      }
+    },
+
+    closeDatabaseTab: (projectId) => {
+      const { openDatabaseTabs, activeDatabaseTab } = get();
+      const nextActive = nextActiveTabAfterClose(openDatabaseTabs, projectId, activeDatabaseTab);
+      set((s) => {
+        s.openDatabaseTabs = s.openDatabaseTabs.filter((pid) => pid !== projectId);
+        s.activeDatabaseTab = nextActive;
+      });
+      useProjectStore.setState((s) => ({
+        status: { ...s.status, [projectId]: ProjectConnectionStatus.Disconnected },
+      }));
+    },
+
+    setConnectionPickerOpen: (open) => set({ connectionPickerOpen: open }),
+    setDatabasePickerOpen: (open) => set({ databasePickerOpen: open }),
+
+    renameOpenDatabaseTab: (oldId, newId) =>
+      set((s) => {
+        const idx = s.openDatabaseTabs.indexOf(oldId);
+        if (idx !== -1) s.openDatabaseTabs[idx] = newId;
+        if (s.activeDatabaseTab === oldId) s.activeDatabaseTab = newId;
+      }),
   })),
 );

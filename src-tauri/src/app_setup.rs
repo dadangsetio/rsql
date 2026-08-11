@@ -113,6 +113,7 @@ pub fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>>
             cancel_tokens: Arc::new(Mutex::new(BTreeMap::new())),
             client_ssl: Arc::new(Mutex::new(BTreeMap::new())),
             local_db: db,
+            db_path,
             resource_monitor: Arc::new(Mutex::new(utils::ResourceMonitor::new())),
             virtual_cache: Arc::new(Mutex::new(BTreeMap::new())),
             notify_handles: Arc::new(Mutex::new(BTreeMap::new())),

@@ -5,9 +5,11 @@ import {
   type Item,
   type Theme,
 } from "@glideapps/glide-data-grid";
+import { type ColumnEditInfo, formatNumericDisplay } from "@/lib/column-edit-kind";
 import * as virtualCache from "@/lib/virtual-cache";
 import type { CellValue } from "@/lib/wire";
-import type { VirtualQuery } from "@/types";
+import type { SortState, VirtualQuery } from "@/types";
+import { makeFKCell, makeTypedEditCell } from "../results-grid-typed-cell";
 
 export const MIN_COL_WIDTH = 80;
 export const MAX_COL_WIDTH = 400;
@@ -42,7 +44,11 @@ export const FK_OVERRIDE = { textDark: "hsl(220, 70%, 50%)", textLight: "hsl(220
 export const NULL_OVERRIDE = { textDark: "hsl(250, 10%, 50%)", textLight: "hsl(250, 10%, 55%)" };
 export const NULL_DISPLAY = "NULL";
 
-export function computeGridColumns(columns: string[], rows: CellValue[][]): GridColumn[] {
+export function computeGridColumns(
+  columns: string[],
+  rows: CellValue[][],
+  sort?: SortState,
+): GridColumn[] {
   const sampleRows = rows.slice(0, 100);
   return columns.map((col, colIdx) => {
     let maxLen = col.length + 2;
@@ -51,7 +57,8 @@ export function computeGridColumns(columns: string[], rows: CellValue[][]): Grid
       if (cellLen > maxLen) maxLen = cellLen;
     }
     const width = Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, maxLen * CHAR_WIDTH + PADDING));
-    return { title: col, id: col, width };
+    const arrow = sort?.column === col ? (sort.direction === "asc" ? " ▲" : " ▼") : "";
+    return { title: col + arrow, id: col, width };
   });
 }
 
@@ -69,9 +76,16 @@ export function computeFkColIndices(
 
 export interface CellContentContext {
   rows: CellValue[][];
+  /// Maps a displayed row's position back to its index in the unfiltered result;
+  /// cellEdits and deletedRows are always keyed by the unfiltered index.
+  rowIndexMap?: number[];
   cellEdits?: Map<string, string>;
   deletedRows?: Set<number>;
   isEditing?: boolean;
+  /// Single-cell editing without entering the full edit session.
+  editable?: boolean;
+  /// Per-column edit widget, aligned to `columns`; undefined means plain text.
+  colEditInfo?: (ColumnEditInfo | undefined)[];
   fkColIndices: Set<number>;
   virtualQuery?: VirtualQuery;
   onPageNeeded?: (pageIndex: number) => void;
@@ -97,9 +111,12 @@ export function buildCellContent(cell: Item, ctx: CellContentContext): GridCell 
   const [colIdx, rowIdx] = cell;
   const {
     rows,
+    rowIndexMap,
     cellEdits,
     deletedRows,
     isEditing,
+    editable,
+    colEditInfo,
     fkColIndices,
     virtualQuery,
     onPageNeeded,
@@ -121,29 +138,67 @@ export function buildCellContent(cell: Item, ctx: CellContentContext): GridCell 
     return readonlyCell(row[colIdx]);
   }
 
-  const key = `${rowIdx}:${colIdx}`;
+  const trueRowIdx = rowIndexMap ? rowIndexMap[rowIdx] : rowIdx;
+  const key = `${trueRowIdx}:${colIdx}`;
   const isModified = cellEdits?.has(key);
-  const isDeleted = deletedRows?.has(rowIdx);
+  const isDeleted = deletedRows?.has(trueRowIdx);
   const raw = isModified ? (cellEdits?.get(key) ?? "") : rows[rowIdx]?.[colIdx];
   const isNull = raw === null;
   const value = raw ?? "";
-  const isFK = fkColIndices.has(colIdx) && !isEditing && !isNull;
+  const isFK = fkColIndices.has(colIdx);
+  const canOverlay = (!!isEditing || !!editable) && !isFK && !isDeleted;
+
+  const themeOverride = isDeleted
+    ? deletedOverride
+    : isModified
+      ? modifiedOverride
+      : isNull
+        ? NULL_OVERRIDE
+        : isFK
+          ? fkOverride
+          : undefined;
+
+  // Type info drives read-only display formatting regardless of edit access; the richer
+  // input widgets only take over the cell when it is actually editable.
+  const info = colEditInfo?.[colIdx];
+
+  if (info?.kind === "boolean") {
+    return {
+      kind: GridCellKind.Boolean,
+      allowOverlay: false,
+      readonly: !canOverlay,
+      data: isNull ? null : value === "t" || value === "true",
+      themeOverride,
+    };
+  }
+
+  if (
+    canOverlay &&
+    (info?.kind === "enum" ||
+      info?.kind === "date" ||
+      info?.kind === "time" ||
+      info?.kind === "timestamp")
+  ) {
+    return makeTypedEditCell(value, info.kind, info.enumValues, !canOverlay, themeOverride);
+  }
+
+  // A NULL foreign key still renders as an FK cell so it can be assigned through the
+  // relation picker; makeFKCell suppresses the arrow for the NULL label itself.
+  if (isFK) {
+    return makeFKCell(isNull ? NULL_DISPLAY : value, themeOverride);
+  }
 
   return {
     kind: GridCellKind.Text,
     data: value,
-    displayData: isNull ? NULL_DISPLAY : isFK ? `${value} →` : value,
-    allowOverlay: !!isEditing && !isDeleted,
-    readonly: !isEditing || !!isDeleted,
-    themeOverride: isDeleted
-      ? deletedOverride
-      : isModified
-        ? modifiedOverride
-        : isNull
-          ? NULL_OVERRIDE
-          : isFK
-            ? fkOverride
-            : undefined,
+    displayData: isNull
+      ? NULL_DISPLAY
+      : info?.kind === "numeric"
+        ? formatNumericDisplay(value)
+        : value,
+    allowOverlay: canOverlay,
+    readonly: !canOverlay,
+    themeOverride,
   };
 }
 

@@ -47,8 +47,8 @@ pub struct CachedQuery {
 
 pub type VirtualCache = std::collections::BTreeMap<String, CachedQuery>;
 
-/// Column detail info: (name, data_type, nullable, default_value)
-pub type ColumnDetail = (String, String, bool, Option<String>);
+/// Column detail info: (name, data_type, nullable, default_value, udt_name)
+pub type ColumnDetail = (String, String, bool, Option<String>, String);
 
 /// Index info: (index_name, column_name, is_unique, is_primary)
 pub type IndexDetail = (String, String, bool, bool);

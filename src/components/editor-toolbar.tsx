@@ -1,4 +1,23 @@
-import { AlignLeft, Columns2, GitBranch, Play, Save, Square, Timer } from "lucide-react";
+import {
+  AlignLeft,
+  GitBranch,
+  PanelBottom,
+  PanelBottomClose,
+  PanelBottomOpen,
+  PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRight,
+  PanelRightClose,
+  PanelRightOpen,
+  PanelTop,
+  PanelTopClose,
+  PanelTopOpen,
+  Play,
+  Save,
+  Square,
+  Timer,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { format as formatSQL } from "sql-formatter";
 import { Button } from "@/components/ui/button";
@@ -13,6 +32,21 @@ import { Input } from "@/components/ui/input";
 import { useProjectStore } from "@/stores/project-store";
 import { useQueryStore } from "@/stores/query-store";
 import { tabIdAt, useActiveTab, useActiveTabId, useTabStore } from "@/stores/tab-store";
+import { useUIStore } from "@/stores/ui-store";
+
+const PANEL_POSITION_ICON = {
+  top: PanelTop,
+  right: PanelRight,
+  bottom: PanelBottom,
+  left: PanelLeft,
+} as const;
+
+const PANEL_POSITION_COLLAPSE_ICON = {
+  top: { collapse: PanelTopClose, expand: PanelTopOpen },
+  right: { collapse: PanelRightClose, expand: PanelRightOpen },
+  bottom: { collapse: PanelBottomClose, expand: PanelBottomOpen },
+  left: { collapse: PanelLeftClose, expand: PanelLeftOpen },
+} as const;
 
 const TIMEOUT_OPTIONS = [
   { label: "No limit", value: 0 },
@@ -37,10 +71,17 @@ export function EditorToolbar({
   const selectedTabIndex = useTabStore((s) => s.selectedTabIndex);
   const activeTabId = useActiveTabId();
   const updateContent = useTabStore((s) => s.updateContent);
-  const toggleSplit = useTabStore((s) => s.toggleSplit);
   const setQueryTimeout = useTabStore((s) => s.setQueryTimeout);
   const projects = useProjectStore((s) => s.projects);
   const saveQueryAction = useQueryStore((s) => s.saveQuery);
+  const editorCollapsed = useUIStore((s) => s.editorCollapsed);
+  const editorPosition = useUIStore((s) => s.editorPosition);
+  const toggleEditorCollapsed = useUIStore((s) => s.toggleEditorCollapsed);
+  const cyclePanelPosition = useUIStore((s) => s.cyclePanelPosition);
+  const PanelPositionIcon = PANEL_POSITION_ICON[editorPosition];
+  const PanelCollapseIcon = editorCollapsed
+    ? PANEL_POSITION_COLLAPSE_ICON[editorPosition].expand
+    : PANEL_POSITION_COLLAPSE_ICON[editorPosition].collapse;
   const activeProject = activeTab?.projectId;
   const activeProjectDetails = activeProject ? projects[activeProject] : undefined;
 
@@ -86,10 +127,27 @@ export function EditorToolbar({
   if (!activeTab || activeTab.type !== "query") return null;
 
   const hasContent = !!activeTab.editorValue?.trim();
+  const isHorizontal = editorPosition === "left" || editorPosition === "right";
+
+  if (editorCollapsed && isHorizontal) {
+    return (
+      <div className="flex items-center justify-center border-b border-border/40 bg-card/40 backdrop-blur-sm px-1 py-1 flex-shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 w-7 p-0"
+          onClick={toggleEditorCollapsed}
+          title={`Expand query panel (${editorPosition})`}
+        >
+          <PanelCollapseIcon className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-border/40 bg-card/40 backdrop-blur-sm px-2 py-1 flex-shrink-0">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border/40 bg-card/40 backdrop-blur-sm px-2 py-1 flex-shrink-0">
         <Button
           variant="ghost"
           size="sm"
@@ -110,17 +168,6 @@ export function EditorToolbar({
           <AlignLeft className="h-3.5 w-3.5" />
           Format
         </Button>
-        <Button
-          variant={activeTab?.isSplit ? "outline" : "ghost"}
-          size="sm"
-          className="h-7 gap-1.5 text-xs px-2"
-          onClick={() => activeTabId && toggleSplit(activeTabId)}
-          title="Toggle split editor"
-        >
-          <Columns2 className="h-3.5 w-3.5" />
-          Split
-        </Button>
-
         <div className="h-4 w-px bg-border/40 mx-1" />
 
         <div className="flex items-center gap-1">
@@ -144,44 +191,60 @@ export function EditorToolbar({
         <Button
           variant="outline"
           size="sm"
-          className="h-7 gap-1.5 text-xs px-2"
+          className="h-7 w-7 p-0"
           onClick={onExplain}
           disabled={!activeProject || activeTab.isExecuting}
+          title={`Explain (${navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Shift+Enter)`}
         >
           <GitBranch className="h-3.5 w-3.5" />
-          Explain
-          <kbd className="hidden sm:inline-flex ml-0.5 text-[10px] text-muted-foreground/60">
-            {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Shift+Enter
-          </kbd>
         </Button>
         {activeTab.isExecuting ? (
           <Button
             variant="outline"
             size="sm"
-            className="h-7 gap-1.5 text-xs px-2.5 border-destructive/50 text-destructive hover:bg-destructive/10"
+            className="h-7 w-7 p-0 border-destructive/50 text-destructive hover:bg-destructive/10"
             onClick={onCancel}
+            title={`Stop (${navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+.)`}
           >
             <Square className="h-3 w-3" />
-            Stop
-            <kbd className="hidden sm:inline-flex ml-0.5 text-[10px] opacity-60">
-              {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+.
-            </kbd>
           </Button>
         ) : (
           <Button
             variant="gradient"
             size="sm"
-            className="h-7 gap-1.5 text-xs px-2.5"
+            className="h-7 w-7 p-0"
             onClick={onExecute}
             disabled={!activeProject}
+            title={`Execute (${navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter)`}
           >
             <Play className="h-3.5 w-3.5" />
-            Execute
-            <kbd className="hidden sm:inline-flex ml-0.5 text-[10px] text-white/60">
-              {navigator.platform.includes("Mac") ? "\u2318" : "Ctrl"}+Enter
-            </kbd>
           </Button>
         )}
+
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            onClick={cyclePanelPosition}
+            title={`Move query panel (currently ${editorPosition})`}
+          >
+            <PanelPositionIcon className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            onClick={toggleEditorCollapsed}
+            title={
+              editorCollapsed
+                ? `Expand query panel (${editorPosition})`
+                : `Collapse query panel to ${editorPosition}`
+            }
+          >
+            <PanelCollapseIcon className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
 
       <Dialog open={saveDialogOpen} onOpenChange={setSaveDialogOpen}>

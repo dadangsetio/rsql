@@ -3,6 +3,7 @@ import {
   Clock,
   Diff,
   Edit3,
+  Filter as FilterIcon,
   GitBranch,
   History,
   Loader2,
@@ -45,6 +46,9 @@ export function ResultsToolbar(props: ToolbarProps) {
     onDiscard,
     onCancel,
     virtualQuery,
+    filterOpen,
+    hasActiveFilter,
+    onToggleFilter,
   } = props;
 
   const pinnedResult = useUIStore((s) => s.pinnedResult);
@@ -290,6 +294,26 @@ export function ResultsToolbar(props: ToolbarProps) {
               </div>
             )}
           </>
+        )}
+
+        {/* Filter — re-queries the database rather than filtering already-loaded rows, so it
+            stays available for virtual/paginated results too. Stays visible in edit mode. */}
+        {panelView !== "history" && result && (
+          <button
+            type="button"
+            onClick={onToggleFilter}
+            title="Filter results (Cmd/Ctrl+F)"
+            className={`relative flex items-center h-7 px-2 rounded text-xs font-mono transition-colors ${
+              filterOpen
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent"
+            }`}
+          >
+            <FilterIcon className="h-3.5 w-3.5" />
+            {hasActiveFilter && (
+              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
+            )}
+          </button>
         )}
       </div>
     </div>

@@ -25,6 +25,7 @@ pub struct AppState {
     pub cancel_tokens: Arc<Mutex<BTreeMap<String, (String, CancelToken)>>>,
     pub client_ssl: Arc<Mutex<BTreeMap<String, bool>>>,
     pub local_db: libsql::Database,
+    pub db_path: String,
     pub resource_monitor: Arc<Mutex<utils::ResourceMonitor>>,
     pub virtual_cache: Arc<Mutex<drivers::pgsql::VirtualCache>>,
     pub notify_handles: Arc<Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>>,
@@ -46,6 +47,8 @@ fn main() {
         .plugin(tauri_plugin_process::init())
         .setup(app_setup::setup_app)
         .invoke_handler(tauri::generate_handler![
+            dbs::backup::db_backup,
+            dbs::backup::db_restore,
             dbs::project::project_db_select,
             dbs::project::project_db_insert,
             dbs::project::project_db_delete,
@@ -55,6 +58,8 @@ fn main() {
             dbs::workspace::workspace_save,
             dbs::workspace::workspace_load_all,
             dbs::workspace::workspace_delete,
+            drivers::pg_backup::pgsql_backup,
+            drivers::pg_backup::pgsql_restore,
             drivers::pgsql::pgsql_test_connection,
             drivers::pgsql::pgsql_connector,
             drivers::pgsql::pgsql_load_databases,

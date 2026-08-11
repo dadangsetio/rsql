@@ -22,6 +22,7 @@ import { TerminalPanel } from "@/components/terminal-panel";
 import { TopBar } from "@/components/top-bar";
 import { useAppStartup } from "@/hooks/use-app-startup";
 import { useQueryLifecycle } from "@/hooks/use-query-lifecycle";
+import { serverFingerprint } from "@/lib/server-groups";
 import { checkForUpdates } from "@/lib/updater";
 import { useProjectStore } from "@/stores/project-store";
 import { useActiveTab, useActiveTabId, useTabStore } from "@/stores/tab-store";
@@ -31,15 +32,24 @@ import "@/monaco/setup";
 
 export default function App() {
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);
-  const editorHeight = useUIStore((s) => s.editorHeight);
+  const editorHeightVertical = useUIStore((s) => s.editorHeightVertical);
+  const editorHeightHorizontal = useUIStore((s) => s.editorHeightHorizontal);
   const connectionModalOpen = useUIStore((s) => s.connectionModalOpen);
   const setConnectionModalOpen = useUIStore((s) => s.setConnectionModalOpen);
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
   const setEditorHeight = useUIStore((s) => s.setEditorHeight);
+  const editorCollapsed = useUIStore((s) => s.editorCollapsed);
+  const editorPosition = useUIStore((s) => s.editorPosition);
+  const layoutDirection =
+    editorPosition === "left" || editorPosition === "right" ? "horizontal" : "vertical";
+  const panelSwapped = editorPosition === "left" || editorPosition === "top";
+  const editorHeight =
+    layoutDirection === "horizontal" ? editorHeightHorizontal : editorHeightVertical;
 
   const projects = useProjectStore((s) => s.projects);
   const saveConnection = useProjectStore((s) => s.saveConnection);
   const updateConnection = useProjectStore((s) => s.updateConnection);
+  const deleteProject = useProjectStore((s) => s.deleteProject);
   const activeTabId = useActiveTabId();
   const activeTab = useActiveTab();
   const updateContent = useTabStore((s) => s.updateContent);
@@ -89,12 +99,22 @@ export default function App() {
       };
       if (editingConnection) {
         await updateConnection(connection.name, details);
+        if (connection.name !== editingConnection.name) {
+          useUIStore.getState().renameOpenDatabaseTab(editingConnection.name, connection.name);
+          await deleteProject(editingConnection.name);
+        }
         setEditingConnection(null);
       } else {
         await saveConnection(connection.name, details);
+        const ui = useUIStore.getState();
+        ui.setConnectionModalOpen(false);
+        ui.setConnectionPickerOpen(false);
+        ui.setDatabasePickerOpen(false);
+        ui.setActiveServerFp(serverFingerprint(details));
+        ui.openDatabaseTab(connection.name);
       }
     },
-    [saveConnection, updateConnection, editingConnection],
+    [saveConnection, updateConnection, deleteProject, editingConnection],
   );
 
   const handleEditConnection = useCallback(
@@ -124,6 +144,7 @@ export default function App() {
       <TopBar
         onCheckUpdates={() => void checkForUpdates()}
         onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        onEditConnection={handleEditConnection}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -260,25 +281,64 @@ export default function App() {
               </div>
             </>
           ) : (
-            <>
-              <EditorToolbar
-                onExecute={() => void runQuery()}
-                onExplain={() => void runExplain()}
-                onCancel={() => void cancelQuery()}
-              />
-              <div style={{ height: `${editorHeight}%` }} className="flex flex-col overflow-hidden">
-                <QueryEditor
-                  value={activeTab?.editorValue ?? ""}
-                  onChange={(v) => activeTabId && updateContent(activeTabId, v)}
-                  onExecute={() => void runQuery()}
-                  onExplain={() => void runExplain()}
-                />
-              </div>
-              <ResizeHandle direction="vertical" onResize={setEditorHeight} />
-              <div className="flex-1 min-h-0">
-                <ResultsPanel />
-              </div>
-            </>
+            <div
+              className={`flex flex-1 min-h-0 overflow-hidden ${layoutDirection === "horizontal" ? "flex-row" : "flex-col"}`}
+            >
+              {(() => {
+                const resultsSize = `${100 - editorHeight}%`;
+                const resultsStyle = editorCollapsed
+                  ? undefined
+                  : layoutDirection === "horizontal"
+                    ? { width: resultsSize }
+                    : { height: resultsSize };
+                const resultsPane = (
+                  <div
+                    style={resultsStyle}
+                    className={`min-h-0 min-w-0 overflow-hidden ${editorCollapsed ? "flex-1" : "flex-shrink-0"}`}
+                  >
+                    <ResultsPanel />
+                  </div>
+                );
+                const editorPane = (
+                  <div
+                    className={`min-h-0 min-w-0 flex flex-col overflow-hidden ${editorCollapsed ? "flex-shrink-0" : "flex-1"}`}
+                  >
+                    <EditorToolbar
+                      onExecute={() => void runQuery()}
+                      onExplain={() => void runExplain()}
+                      onCancel={() => void cancelQuery()}
+                    />
+                    {!editorCollapsed && (
+                      <QueryEditor
+                        value={activeTab?.editorValue ?? ""}
+                        onChange={(v) => activeTabId && updateContent(activeTabId, v)}
+                        onExecute={() => void runQuery()}
+                        onExplain={() => void runExplain()}
+                      />
+                    )}
+                  </div>
+                );
+                const handle = !editorCollapsed && (
+                  <ResizeHandle
+                    direction={layoutDirection}
+                    onResize={(delta) => setEditorHeight(panelSwapped ? delta : -delta)}
+                  />
+                );
+                return panelSwapped ? (
+                  <>
+                    {editorPane}
+                    {handle}
+                    {resultsPane}
+                  </>
+                ) : (
+                  <>
+                    {resultsPane}
+                    {handle}
+                    {editorPane}
+                  </>
+                );
+              })()}
+            </div>
           )}
         </div>
       </div>

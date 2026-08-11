@@ -3,7 +3,7 @@ import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import type { EditSession } from "@/lib/mutations";
 import type { CellValue } from "@/lib/wire";
-import type { ExplainPlan, QueryResult, Tab, VirtualQuery } from "@/types";
+import type { ExplainPlan, FilterState, QueryResult, SortState, Tab, VirtualQuery } from "@/types";
 
 let nextId = 1;
 function genTabId(): string {
@@ -35,6 +35,8 @@ interface TabState {
   setProjectId: (tabId: string, projectId: string) => void;
   setExplainResult: (tabId: string, plan: ExplainPlan | undefined) => void;
   setVirtualQuery: (tabId: string, vq: VirtualQuery | undefined) => void;
+  setFilter: (tabId: string, filter: FilterState | undefined) => void;
+  setSort: (tabId: string, sort: SortState | undefined) => void;
   toggleSplit: (tabId: string) => void;
   updateSplitContent: (tabId: string, value: string) => void;
   setSplitResult: (tabId: string, result: QueryResult) => void;
@@ -214,6 +216,18 @@ export const useTabStore = create<TabState>()(
         set((s) => {
           withTab(s, tabId, (tab) => {
             tab.virtualQuery = vq;
+          });
+        }),
+      setFilter: (tabId, filter) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            tab.filter = filter;
+          });
+        }),
+      setSort: (tabId, sort) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            tab.sort = sort;
           });
         }),
 

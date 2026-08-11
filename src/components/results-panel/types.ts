@@ -29,4 +29,7 @@ export interface ToolbarProps {
   onDiscard: () => void;
   onCancel?: () => void;
   virtualQuery?: { queryId: string; totalRows: number; time: number; pageSize: number };
+  filterOpen: boolean;
+  hasActiveFilter: boolean;
+  onToggleFilter: () => void;
 }
