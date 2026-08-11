@@ -59,10 +59,11 @@ export function ActivityLog() {
   }, [open]);
 
   useEffect(() => {
-    if (!open) {
-      setSelected(new Set());
-      return;
-    }
+    if (!open) setSelected(new Set());
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "c" && selected.size > 0) {
         e.preventDefault();
