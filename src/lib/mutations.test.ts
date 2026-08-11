@@ -117,6 +117,15 @@ describe("buildMutations", () => {
       ["tenant", null],
     ]);
   });
+
+  it("sends staged draft rows as inserts with an empty key", () => {
+    const result = buildMutations(session({ inserts: { draft1: { name: "ada" } } }));
+    expect(result).toEqual([{ kind: "insert", set: [["name", "ada"]], pk: [] }]);
+  });
+
+  it("skips a draft row with no cells set — the perpetual blank row", () => {
+    expect(buildMutations(session({ inserts: { draft1: {} } }))).toEqual([]);
+  });
 });
 
 describe("countPending", () => {
@@ -125,18 +134,24 @@ describe("countPending", () => {
 
   it("counts updates and deletes separately", () => {
     const counts = countPending(session({ edits: { [keyOne]: { name: "a" } }, deletes: [keyTwo] }));
-    expect(counts).toEqual({ updates: 1, deletes: 1 });
+    expect(counts).toEqual({ updates: 1, deletes: 1, inserts: 0 });
   });
 
   it("does not count an edit that is shadowed by a delete", () => {
     const counts = countPending(session({ edits: { [keyOne]: { name: "a" } }, deletes: [keyOne] }));
-    expect(counts).toEqual({ updates: 0, deletes: 1 });
+    expect(counts).toEqual({ updates: 0, deletes: 1, inserts: 0 });
   });
 
   it("does not count a row whose edits were reverted", () => {
     expect(countPending(session({ edits: { [keyOne]: {} } }))).toEqual({
       updates: 0,
       deletes: 0,
+      inserts: 0,
     });
+  });
+
+  it("counts draft rows that have at least one cell set", () => {
+    const counts = countPending(session({ inserts: { draft1: { name: "a" }, draft2: {} } }));
+    expect(counts).toEqual({ updates: 0, deletes: 0, inserts: 1 });
   });
 });

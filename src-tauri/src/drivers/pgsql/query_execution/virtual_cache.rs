@@ -58,10 +58,6 @@ impl PageAccumulator {
         }
         self
     }
-
-    fn is_empty(&self) -> bool {
-        self.total_rows == 0
-    }
 }
 
 /// Execute a query and pre-pack its rows into page-sized strings held in memory.
@@ -87,6 +83,11 @@ pub async fn execute_virtual(
 
     while let Some(message) = stream.try_next().await.map_err(query_failed)? {
         match message {
+            // Sent before any rows, even when the statement matches zero of them —
+            // capturing it here is what lets an empty SELECT still keep its columns.
+            SimpleQueryMessage::RowDescription(cols) => {
+                accum.columns = cols.iter().map(|c| c.name().to_owned()).collect();
+            }
             SimpleQueryMessage::Row(row) => {
                 accum.push(&row, page_size);
                 if accum.at_limit() {
@@ -94,11 +95,11 @@ pub async fn execute_virtual(
                     break;
                 }
             }
-            // Multi-statement scripts report the last statement that had rows,
+            // Multi-statement scripts report the last SELECT-shaped statement,
             // matching what the non-virtual paths do.
             SimpleQueryMessage::CommandComplete(n) => {
                 total_affected += n;
-                if !accum.is_empty() {
+                if !accum.columns.is_empty() {
                     last = Some(std::mem::take(&mut accum).finish());
                 } else {
                     accum = PageAccumulator::default();
@@ -108,10 +109,10 @@ pub async fn execute_virtual(
         }
     }
 
-    let result = if accum.is_empty() {
-        last.unwrap_or_default()
-    } else {
+    let result = if !accum.columns.is_empty() {
         accum.finish()
+    } else {
+        last.unwrap_or_default()
     };
 
     let elapsed = start.elapsed().as_millis() as f32;
@@ -246,6 +247,6 @@ mod tests {
 
     #[test]
     fn an_empty_accumulator_reports_empty() {
-        assert!(PageAccumulator::default().is_empty());
+        assert_eq!(PageAccumulator::default().total_rows, 0);
     }
 }

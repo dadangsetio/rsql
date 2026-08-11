@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import type { ResultsGridHandle } from "@/components/results-grid";
 import { DriverFactory } from "@/lib/database-driver";
 import * as virtualCache from "@/lib/virtual-cache";
 import { useProjectStore } from "@/stores/project-store";
@@ -30,7 +31,7 @@ export function useVirtualPaging({ vq, projectId }: UseVirtualPagingArgs) {
   const queuedPageSet = useRef(new Set<number>());
   const activeFetches = useRef(0);
   const latestRequestedPage = useRef(0);
-  const gridRef = useRef<{ invalidatePage: (pageIndex: number) => void }>(null);
+  const gridRef = useRef<ResultsGridHandle>(null);
   const virtualViewportRows = useRef(new Map<string, number>());
 
   useEffect(() => {

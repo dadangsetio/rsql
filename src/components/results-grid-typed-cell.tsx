@@ -20,6 +20,8 @@ export interface TypedEditCellData {
   /** Raw storage value — the "null" sentinel represents SQL NULL, matching the rest of the grid. */
   readonly value: string;
   readonly options?: readonly string[];
+  /** Whether the enum dropdown offers a NULL option — false hides it, for a NOT NULL column. */
+  readonly nullable?: boolean;
 }
 
 export type TypedEditCell = CustomCell<TypedEditCellData>;
@@ -30,6 +32,7 @@ export function makeTypedEditCell(
   enumValues: string[] | undefined,
   readonly: boolean,
   themeOverride: Partial<Theme> | undefined,
+  nullable = true,
 ): TypedEditCell {
   return {
     kind: GridCellKind.Custom,
@@ -37,7 +40,7 @@ export function makeTypedEditCell(
     readonly,
     copyData: value,
     themeOverride,
-    data: { kind: "typed-edit", editKind, value, options: enumValues },
+    data: { kind: "typed-edit", editKind, value, options: enumValues, nullable },
   };
 }
 
@@ -64,7 +67,7 @@ const TypedEditEditor: ProvideEditorComponent<TypedEditCell> = (p) => {
           if (e.key === "Escape") p.onFinishedEditing(undefined);
         }}
       >
-        <option value="null">NULL</option>
+        {data.nullable !== false && <option value="null">NULL</option>}
         {(data.options ?? []).map((opt) => (
           <option key={opt} value={opt}>
             {opt}

@@ -1,9 +1,11 @@
 import { Loader2, X, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { CSVImportModal } from "@/components/csv-import-modal";
+import { ResizeHandle } from "@/components/resize-handle";
 import { DriverFactory } from "@/lib/database-driver";
 import { cellText } from "@/lib/wire";
 import { useProjectStore } from "@/stores/project-store";
-import { useActiveTab } from "@/stores/tab-store";
+import { useActiveTab, useTabStore } from "@/stores/tab-store";
 import { useUIStore } from "@/stores/ui-store";
 import { ExplainPanel } from "../explain-panel";
 import { FilterBar } from "../filter-bar";
@@ -13,6 +15,7 @@ import { ResultsGrid } from "../results-grid";
 import { ResultsMap } from "../results-map";
 import { ResultsRecord } from "../results-record";
 import { DiffView } from "./diff-view";
+import { RowDetailPanel } from "./row-detail-panel";
 import { ResultsToolbar } from "./toolbar";
 import type { PanelView } from "./types";
 import { useEditMode } from "./use-edit-mode";
@@ -24,6 +27,9 @@ export function ResultsPanel() {
   const viewMode = useUIStore((s) => s.viewMode);
   const setViewMode = useUIStore((s) => s.setViewMode);
   const pinnedResult = useUIStore((s) => s.pinnedResult);
+  const rowDetailPanelOpen = useUIStore((s) => s.rowDetailPanelOpen);
+  const toggleRowDetailPanel = useUIStore((s) => s.toggleRowDetailPanel);
+  const setRowDetailPanelWidth = useUIStore((s) => s.setRowDetailPanelWidth);
   const [panelView, setPanelView] = useState<PanelView>("grid");
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -59,6 +65,27 @@ export function ResultsPanel() {
     projectId: activeTab?.projectId,
   });
 
+  const handleFitColumns = useCallback(() => gridRef.current?.fitColumns(), [gridRef]);
+
+  // Right-click "Refresh" — a plain re-run of the current query, deliberately
+  // not routed through useFilterSort's applyFilter: that skips re-running SQL
+  // it already applied, which is the one thing a forced refresh must not do.
+  const handleRefresh = useCallback(async () => {
+    if (!activeTab?.projectId || !activeTab.editorValue.trim()) return;
+    const tabId = activeTab.id;
+    const projectId = activeTab.projectId;
+    const d = useProjectStore.getState().projects[projectId];
+    if (!d) return;
+    const driver = DriverFactory.getDriver(d.driver);
+    useTabStore.getState().setExecuting(tabId, true);
+    try {
+      const [cols, rows, time] = await driver.runQuery(projectId, activeTab.editorValue);
+      useTabStore.getState().updateResult(tabId, { columns: cols, rows, time });
+    } catch {
+      useTabStore.getState().setExecuting(tabId, false);
+    }
+  }, [activeTab?.projectId, activeTab?.editorValue, activeTab?.id]);
+
   const {
     isEditing,
     editError,
@@ -73,6 +100,7 @@ export function ResultsPanel() {
     filterColumnKinds,
     editedCells,
     deletedRowIndices,
+    insertRows,
     handleUndo,
     handleFKNavigate,
     handleEnterEdit,
@@ -83,6 +111,9 @@ export function ResultsPanel() {
     handleCellEdit,
     handleRowDelete,
     handleRowRestore,
+    handleAddRow,
+    handleDuplicateRow,
+    handlePasteRows,
   } = useEditMode({
     tabId: activeTab?.id,
     projectId: activeTab?.projectId,
@@ -90,14 +121,40 @@ export function ResultsPanel() {
     result,
   });
 
+  const [csvImportTarget, setCsvImportTarget] = useState<{ columns: string[] } | null>(null);
+  const handleImport = useCallback(async () => {
+    if (!editableTable || !activeTab?.projectId) return;
+    const cols = await useProjectStore
+      .getState()
+      .loadColumns(activeTab.projectId, editableTable.schema, editableTable.table);
+    setCsvImportTarget({ columns: cols });
+  }, [editableTable, activeTab?.projectId]);
+
+  // Search-filtering trims which rows are shown, but nothing else knows about
+  // that — edit-session row identity and the insert row's position are both
+  // computed against the unfiltered result. That's fine while editing, since
+  // search is already disabled then; it now also has to stay disabled the
+  // moment an editable table's blank insert row appears, or double-clicking
+  // it would target the wrong row entirely.
   const filteredRows = useMemo(() => {
-    if (isEditing) return result?.rows ?? [];
+    if (isEditing || editableTable) return result?.rows ?? [];
     if (!result || !debouncedSearch.trim()) return result?.rows ?? [];
     const term = debouncedSearch.toLowerCase();
     return result.rows.filter((row) =>
       row.some((cell) => cellText(cell).toLowerCase().includes(term)),
     );
-  }, [result, debouncedSearch, isEditing]);
+  }, [result, debouncedSearch, isEditing, editableTable]);
+
+  // insertRows already decides whether there is anything to offer (an active
+  // session's drafts, or a lone invitation row on an empty editable result) —
+  // vq is still checked directly since a virtual (paged) query has no stable
+  // "end of results" to append a row to.
+  const canInsert = !vq && insertRows.length > 0;
+  const gridRows = useMemo(
+    () => (canInsert ? [...filteredRows, ...insertRows] : filteredRows),
+    [canInsert, filteredRows, insertRows],
+  );
+  const insertRowStart = canInsert ? filteredRows.length : undefined;
 
   const {
     filterState,
@@ -170,6 +227,7 @@ export function ResultsPanel() {
     onDiscard: handleDiscard,
     onCancel: handleCancel,
     virtualQuery: vq,
+    onFitColumns: handleFitColumns,
   };
 
   if (panelView === "explain" && hasExplain) {
@@ -317,35 +375,60 @@ export function ResultsPanel() {
           </button>
         </div>
       )}
-      {viewMode === "grid" ? (
-        <ResultsGrid
-          key={activeTab?.id ?? "results-grid"}
-          columns={result.columns}
-          rows={filteredRows}
-          isEditing={isEditing}
-          editable={!!editableTable && !vq}
-          cellEdits={editedCells}
-          deletedRows={deletedRowIndices}
-          columnTypes={columnTypes}
-          onCellEdit={handleCellEdit}
-          onRowDelete={handleRowDelete}
-          onRowRestore={handleRowRestore}
-          onUndo={handleUndo}
-          fkColumns={fkMap}
-          onFKNavigate={handleFKNavigate}
-          onFKPickerOpen={handleFKPickerOpen}
-          sort={activeTab?.sort}
-          onSortColumn={handleSortColumn}
-          virtualQuery={vq}
-          onPageNeeded={vq ? handlePageNeeded : undefined}
-          onViewportRowChange={vq ? handleViewportRowChange : undefined}
-          restoreRowIndex={vq ? restoreRowIndex : undefined}
-          viewportKey={vq?.queryId}
-          gridRef={gridRef}
-        />
-      ) : (
-        <ResultsRecord columns={result.columns} rows={filteredRows} />
-      )}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex flex-1 min-w-0 flex-col">
+          {viewMode === "grid" ? (
+            <ResultsGrid
+              key={activeTab?.id ?? "results-grid"}
+              columns={result.columns}
+              rows={gridRows}
+              isEditing={isEditing}
+              editable={!!editableTable && !vq}
+              cellEdits={editedCells}
+              deletedRows={deletedRowIndices}
+              columnTypes={columnTypes}
+              insertRowStart={insertRowStart}
+              onCellEdit={handleCellEdit}
+              onRowDelete={handleRowDelete}
+              onRowRestore={handleRowRestore}
+              onUndo={handleUndo}
+              fkColumns={fkMap}
+              onFKNavigate={handleFKNavigate}
+              onFKPickerOpen={handleFKPickerOpen}
+              sort={activeTab?.sort}
+              onSortColumn={handleSortColumn}
+              onRefresh={!vq ? handleRefresh : undefined}
+              onAddRow={!vq && editableTable ? handleAddRow : undefined}
+              onDuplicateRow={!vq && editableTable ? handleDuplicateRow : undefined}
+              onPasteRows={!vq && editableTable ? handlePasteRows : undefined}
+              onImport={!vq && editableTable ? handleImport : undefined}
+              virtualQuery={vq}
+              onPageNeeded={vq ? handlePageNeeded : undefined}
+              onViewportRowChange={vq ? handleViewportRowChange : undefined}
+              restoreRowIndex={vq ? restoreRowIndex : undefined}
+              viewportKey={vq?.queryId}
+              gridRef={gridRef}
+            />
+          ) : (
+            <ResultsRecord columns={result.columns} rows={filteredRows} />
+          )}
+        </div>
+        {rowDetailPanelOpen && (
+          <>
+            <ResizeHandle direction="horizontal" onResize={(d) => setRowDetailPanelWidth(-d)} />
+            <RowDetailPanel
+              columns={result.columns}
+              rows={gridRows}
+              editedCells={editedCells}
+              deletedRows={deletedRowIndices}
+              columnTypes={columnTypes}
+              canEdit={!!editableTable && !vq && result.rows.length > 0}
+              onCellEdit={handleCellEdit}
+              onClose={toggleRowDetailPanel}
+            />
+          </>
+        )}
+      </div>
       {fkPickerInfo && activeTab?.projectId && (
         <RelationPickerModal
           open
@@ -362,6 +445,18 @@ export function ResultsPanel() {
             handleCellEdit(fkPickerInfo.rowIndex, fkPickerInfo.colIndex, value);
             setFkPicker(null);
           }}
+        />
+      )}
+      {csvImportTarget && editableTable && activeTab?.projectId && (
+        <CSVImportModal
+          open
+          onOpenChange={(v) => {
+            if (!v) setCsvImportTarget(null);
+          }}
+          projectId={activeTab.projectId}
+          schema={editableTable.schema}
+          table={editableTable.table}
+          tableColumns={csvImportTarget.columns}
         />
       )}
     </div>

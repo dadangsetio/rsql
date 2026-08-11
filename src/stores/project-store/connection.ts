@@ -62,10 +62,14 @@ export const createConnectionSlice: StateCreator<
 
         // Warm the schema the editor will almost certainly complete against, so
         // the first suggestion does not arrive a round trip late. Other schemas
-        // load when something actually refers to them.
+        // load when something actually refers to them. The sidebar tree opens
+        // straight to it too, tables already loaded, instead of landing on a
+        // collapsed schema list.
         const preferred = schemas.includes("public") ? "public" : schemas[0];
         if (preferred) {
           void useSchemaIndexStore.getState().ensureIndex(projectId, preferred);
+          void get().loadTables(projectId, preferred);
+          void get().loadSchemaObjects(projectId, preferred);
         }
       }
     } catch (err: unknown) {

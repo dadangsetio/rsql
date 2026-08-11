@@ -9,7 +9,7 @@ import {
 } from "../ui/dialog";
 
 interface ToolbarEditProps {
-  pending: { updates: number; deletes: number };
+  pending: { updates: number; deletes: number; inserts: number };
   sessionMatchesEditor: boolean;
   editError: string | null;
   isCommitting: boolean;
@@ -20,8 +20,17 @@ interface ToolbarEditProps {
   onDiscard: () => void;
 }
 
-function summarize({ updates, deletes }: { updates: number; deletes: number }): string {
+function summarize({
+  updates,
+  deletes,
+  inserts,
+}: {
+  updates: number;
+  deletes: number;
+  inserts: number;
+}): string {
   const parts: string[] = [];
+  if (inserts > 0) parts.push(`${inserts} insert${inserts === 1 ? "" : "s"}`);
   if (updates > 0) parts.push(`${updates} update${updates === 1 ? "" : "s"}`);
   if (deletes > 0) parts.push(`${deletes} deletion${deletes === 1 ? "" : "s"}`);
   return parts.join(" and ");
@@ -38,7 +47,7 @@ export function ToolbarEdit({
   onCancelApply,
   onDiscard,
 }: ToolbarEditProps) {
-  const total = pending.updates + pending.deletes;
+  const total = pending.updates + pending.deletes + pending.inserts;
   const summary = summarize(pending);
 
   return (

@@ -3,7 +3,15 @@ import { persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 import type { EditSession } from "@/lib/mutations";
 import type { CellValue } from "@/lib/wire";
-import type { ExplainPlan, FilterState, QueryResult, SortState, Tab, VirtualQuery } from "@/types";
+import type {
+  ExplainPlan,
+  FilterState,
+  ObjectPanelSpec,
+  QueryResult,
+  SortState,
+  Tab,
+  VirtualQuery,
+} from "@/types";
 
 let nextId = 1;
 function genTabId(): string {
@@ -17,6 +25,8 @@ interface TabState {
   openTab: (projectId?: string, editorValue?: string) => void;
   openMonitorTab: (projectId: string) => void;
   openERDTab: (projectId: string, schema: string) => void;
+  openNewTableTab: (projectId: string, schema: string) => void;
+  openObjectPanelTab: (projectId: string, spec: ObjectPanelSpec) => void;
   openTerminalTab: () => void;
   openNotifyTab: (projectId: string) => void;
   openRolesTab: (projectId: string) => void;
@@ -25,6 +35,7 @@ interface TabState {
   openEnumsTab: (projectId: string) => void;
   openPgSettingsTab: (projectId: string) => void;
   closeTab: (index: number) => void;
+  closeTabById: (tabId: string) => void;
   closeAllTabs: () => void;
   closeOtherTabs: (index: number) => void;
   selectTab: (index: number) => void;
@@ -47,6 +58,9 @@ interface TabState {
   discardEditSession: (tabId: string) => void;
   setCellEdit: (tabId: string, key: string, column: string, value: CellValue | undefined) => void;
   setRowDeleted: (tabId: string, key: string, deleted: boolean) => void;
+  setInsertCell: (tabId: string, draftId: string, column: string, value: CellValue) => void;
+  unsetInsertCell: (tabId: string, draftId: string, column: string) => void;
+  removeInsertRow: (tabId: string, draftId: string) => void;
 }
 
 /// Tabs are addressed by id, never by index: an index captured before an await
@@ -55,6 +69,19 @@ interface TabState {
 function withTab(state: TabState, tabId: string, apply: (tab: Tab) => void): void {
   const tab = state.tabs.find((t) => t.id === tabId);
   if (tab) apply(tab);
+}
+
+function removeTabAt(state: TabState, index: number): void {
+  state.tabs.splice(index, 1);
+  if (state.tabs.length === 0) {
+    state.selectedTabIndex = -1;
+  } else if (state.selectedTabIndex >= state.tabs.length) {
+    state.selectedTabIndex = state.tabs.length - 1;
+  } else if (state.selectedTabIndex > index) {
+    state.selectedTabIndex--;
+  } else if (state.selectedTabIndex === index && state.selectedTabIndex > 0) {
+    state.selectedTabIndex--;
+  }
 }
 
 function makeSingletonTab(
@@ -116,6 +143,44 @@ export const useTabStore = create<TabState>()(
       openMonitorTab: (projectId) => set(makeSingletonTab("monitor", projectId, "Monitor")),
       openERDTab: (projectId, schema) =>
         set(makeSingletonTab("erd", projectId, `ERD: ${schema}`, schema)),
+      openNewTableTab: (projectId, schema) => {
+        set((s) => {
+          s.tabs.push({
+            id: genTabId(),
+            type: "query",
+            projectId,
+            newTableSchema: schema,
+            title: "New Table",
+            editorValue: "",
+            isExecuting: false,
+          });
+          s.selectedTabIndex = s.tabs.length - 1;
+        });
+      },
+      openObjectPanelTab: (projectId, spec) => {
+        set((s) => {
+          const kindLabel =
+            spec.kind === "view"
+              ? "View"
+              : spec.kind === "matview"
+                ? "Materialized View"
+                : spec.isProcedure
+                  ? "Procedure"
+                  : "Function";
+          const title = spec.name ? `Edit ${kindLabel}: ${spec.name}` : `New ${kindLabel}`;
+          s.tabs.push({
+            id: genTabId(),
+            type: "query",
+            projectId,
+            schema: spec.schema,
+            objectPanel: spec,
+            title,
+            editorValue: "",
+            isExecuting: false,
+          });
+          s.selectedTabIndex = s.tabs.length - 1;
+        });
+      },
       openTerminalTab: () => {
         set((s) => {
           s.tabs.push({
@@ -140,16 +205,15 @@ export const useTabStore = create<TabState>()(
 
       closeTab: (index) => {
         set((s) => {
-          s.tabs.splice(index, 1);
-          if (s.tabs.length === 0) {
-            s.selectedTabIndex = -1;
-          } else if (s.selectedTabIndex >= s.tabs.length) {
-            s.selectedTabIndex = s.tabs.length - 1;
-          } else if (s.selectedTabIndex > index) {
-            s.selectedTabIndex--;
-          } else if (s.selectedTabIndex === index && s.selectedTabIndex > 0) {
-            s.selectedTabIndex--;
-          }
+          removeTabAt(s, index);
+        });
+      },
+
+      closeTabById: (tabId) => {
+        set((s) => {
+          const index = s.tabs.findIndex((t) => t.id === tabId);
+          if (index < 0) return;
+          removeTabAt(s, index);
         });
       },
 
@@ -310,6 +374,34 @@ export const useTabStore = create<TabState>()(
             if (!deleted && marked) {
               session.deletes = session.deletes.filter((k) => k !== key);
             }
+          });
+        }),
+
+      setInsertCell: (tabId, draftId, column, value) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            const session = tab.editSession;
+            if (!session) return;
+            session.inserts[draftId] ??= {};
+            session.inserts[draftId][column] = value;
+          });
+        }),
+
+      unsetInsertCell: (tabId, draftId, column) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            const columns = tab.editSession?.inserts[draftId];
+            if (!columns) return;
+            delete columns[column];
+          });
+        }),
+
+      removeInsertRow: (tabId, draftId) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            const session = tab.editSession;
+            if (!session) return;
+            delete session.inserts[draftId];
           });
         }),
     })),

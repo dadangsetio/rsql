@@ -13,6 +13,7 @@ use super::pool_connection::acquire_client;
 pub struct MutationReport {
     pub updated: usize,
     pub deleted: usize,
+    pub inserted: usize,
 }
 
 /// Column types straight from the catalog. Used both to cast parameters and to
@@ -77,6 +78,7 @@ pub async fn pgsql_apply_row_mutations(
         return Ok(MutationReport {
             updated: 0,
             deleted: 0,
+            inserted: 0,
         });
     }
 
@@ -102,6 +104,7 @@ pub async fn pgsql_apply_row_mutations(
 
     let mut updated = 0usize;
     let mut deleted = 0usize;
+    let mut inserted = 0usize;
 
     for (mutation, statement) in mutations.iter().zip(&planned) {
         let params: Vec<&(dyn ToSql + Sync)> = statement
@@ -116,28 +119,41 @@ pub async fn pgsql_apply_row_mutations(
             .map_err(query_failed)?;
 
         if affected != 1 {
-            let key = describe_key(&mutation.pk);
             // Dropping `tx` without committing rolls the whole batch back.
-            return Err(AppError::QueryFailed(format!(
-                "Expected 1 row for {} but matched {}. Row key: {}. \
-                 Nothing was changed — refresh the results and try again.",
-                match mutation.kind {
-                    MutationKind::Update => "update",
-                    MutationKind::Delete => "delete",
-                },
-                affected,
-                key
-            ))
-            .into());
+            let message = if mutation.kind == MutationKind::Insert {
+                format!(
+                    "Expected to insert 1 row but affected {}. \
+                     Nothing was changed — refresh the results and try again.",
+                    affected
+                )
+            } else {
+                format!(
+                    "Expected 1 row for {} but matched {}. Row key: {}. \
+                     Nothing was changed — refresh the results and try again.",
+                    match mutation.kind {
+                        MutationKind::Update => "update",
+                        MutationKind::Delete => "delete",
+                        MutationKind::Insert => unreachable!(),
+                    },
+                    affected,
+                    describe_key(&mutation.pk)
+                )
+            };
+            return Err(AppError::QueryFailed(message).into());
         }
 
         match mutation.kind {
             MutationKind::Update => updated += 1,
             MutationKind::Delete => deleted += 1,
+            MutationKind::Insert => inserted += 1,
         }
     }
 
     tx.commit().await.map_err(query_failed)?;
 
-    Ok(MutationReport { updated, deleted })
+    Ok(MutationReport {
+        updated,
+        deleted,
+        inserted,
+    })
 }

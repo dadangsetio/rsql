@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { StructureEditorState } from "@/lib/alter-table-sql";
-import { countChanges, generateAlterTableSQL } from "@/lib/alter-table-sql";
+import { countChanges, generateAlterTableSQL, validateDraftColumns } from "@/lib/alter-table-sql";
 import type { DriverFactory } from "@/lib/database-driver";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
@@ -61,6 +61,7 @@ export function StructureEditorContent({
 
   const changes = countChanges(draft);
   const activeColNames = draft.columns.filter((c) => c._status !== "removed").map((c) => c.name);
+  const columnError = validateDraftColumns(draft);
 
   const tables = useProjectStore((s) => s.tables);
   const schemas = useProjectStore((s) => s.schemas);
@@ -216,9 +217,13 @@ export function StructureEditorContent({
 
       {changes > 0 && (
         <div className="shrink-0 mt-2 flex items-center gap-2 pt-2 border-t border-border/20">
-          <span className="text-[10px] font-medium text-muted-foreground">
-            {changes} change{changes !== 1 ? "s" : ""}
-          </span>
+          {columnError ? (
+            <span className="text-[10px] text-destructive">{columnError}</span>
+          ) : (
+            <span className="text-[10px] font-medium text-muted-foreground">
+              {changes} change{changes !== 1 ? "s" : ""}
+            </span>
+          )}
           <div className="flex-1" />
           <Button
             variant="ghost"
@@ -244,7 +249,7 @@ export function StructureEditorContent({
           <Button
             size="sm"
             className="h-7 px-3 text-[11px]"
-            disabled={applying || sqlStatements.length === 0}
+            disabled={applying || sqlStatements.length === 0 || !!columnError}
             onClick={() => void applyChanges()}
           >
             {applying ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}

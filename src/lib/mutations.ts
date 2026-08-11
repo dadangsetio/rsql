@@ -11,7 +11,7 @@
 
 import type { CellValue } from "@/lib/wire";
 
-export type MutationKind = "update" | "delete";
+export type MutationKind = "update" | "delete" | "insert";
 
 export type KeyTuple = [string, CellValue][];
 
@@ -24,6 +24,7 @@ export interface RowMutation {
 export interface MutationReport {
   updated: number;
   deleted: number;
+  inserted: number;
 }
 
 export interface EditSession {
@@ -34,10 +35,12 @@ export interface EditSession {
   edits: Record<string, Record<string, CellValue>>;
   /** pkKey list */
   deletes: string[];
+  /** draftId -> column -> value, for rows staged from the grid's trailing blank row. */
+  inserts: Record<string, Record<string, CellValue>>;
 }
 
 export function emptySession(schema: string, table: string, pkColumns: string[]): EditSession {
-  return { schema, table, pkColumns, edits: {}, deletes: [] };
+  return { schema, table, pkColumns, edits: {}, deletes: [], inserts: {} };
 }
 
 /**
@@ -76,18 +79,27 @@ export function rowKeys(
   return rows.map((row) => pkKey(columns, row, pkColumns));
 }
 
-export function countPending(session: EditSession): { updates: number; deletes: number } {
+export function countPending(session: EditSession): {
+  updates: number;
+  deletes: number;
+  inserts: number;
+} {
   const deletes = new Set(session.deletes);
   const updates = Object.entries(session.edits).filter(
     ([key, columns]) => !deletes.has(key) && Object.keys(columns).length > 0,
   ).length;
-  return { updates, deletes: deletes.size };
+  const inserts = Object.values(session.inserts).filter(
+    (columns) => Object.keys(columns).length > 0,
+  ).length;
+  return { updates, deletes: deletes.size, inserts };
 }
 
 /**
- * Turn a session into the backend payload. Updates come first, and edits on a
- * row that is also marked for deletion are dropped rather than sent — deleting
- * a row makes its cell edits moot.
+ * Turn a session into the backend payload. Updates come first, then deletes,
+ * then inserts. Edits on a row that is also marked for deletion are dropped
+ * rather than sent — deleting a row makes its cell edits moot. A draft row
+ * with no cells set yet (the ever-present blank row at the bottom of the
+ * grid) is not a real insert and is skipped.
  */
 export function buildMutations(session: EditSession): RowMutation[] {
   const deletes = new Set(session.deletes);
@@ -102,6 +114,12 @@ export function buildMutations(session: EditSession): RowMutation[] {
 
   for (const key of session.deletes) {
     out.push({ kind: "delete", set: [], pk: parsePkKey(key) });
+  }
+
+  for (const columns of Object.values(session.inserts)) {
+    const set = Object.entries(columns) as KeyTuple;
+    if (set.length === 0) continue;
+    out.push({ kind: "insert", set, pk: [] });
   }
 
   return out;

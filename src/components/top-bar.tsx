@@ -4,6 +4,7 @@ import {
   DatabaseBackup,
   Download,
   Moon,
+  PanelRight,
   Save,
   Search,
   Server,
@@ -17,7 +18,7 @@ import { DatabasePickerDialog } from "@/components/sidebar/database-picker-dialo
 import { Button } from "@/components/ui/button";
 import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { useProjectStore } from "@/stores/project-store";
-import { tabIdAt, useActiveTab, useTabStore } from "@/stores/tab-store";
+import { useActiveTab } from "@/stores/tab-store";
 import { useUIStore } from "@/stores/ui-store";
 import { ProjectConnectionStatus } from "@/types";
 
@@ -32,6 +33,8 @@ export function TopBar({
 }) {
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
+  const rowDetailPanelOpen = useUIStore((s) => s.rowDetailPanelOpen);
+  const toggleRowDetailPanel = useUIStore((s) => s.toggleRowDetailPanel);
   const activeServerFp = useUIStore((s) => s.activeServerFp);
   const connectionPickerOpen = useUIStore((s) => s.connectionPickerOpen);
   const setConnectionPickerOpen = useUIStore((s) => s.setConnectionPickerOpen);
@@ -39,9 +42,7 @@ export function TopBar({
   const setDatabasePickerOpen = useUIStore((s) => s.setDatabasePickerOpen);
   const projects = useProjectStore((s) => s.projects);
   const status = useProjectStore((s) => s.status);
-  const selectedTabIndex = useTabStore((s) => s.selectedTabIndex);
   const activeTab = useActiveTab();
-  const setProjectId = useTabStore((s) => s.setProjectId);
   const activeProject = activeTab?.projectId;
   const activeProjectDetails = activeProject ? projects[activeProject] : undefined;
   const activeConnected =
@@ -79,45 +80,6 @@ export function TopBar({
         >
           <Database className="h-3.5 w-3.5" /> Databases
         </Button>
-
-        <div className="h-4 w-px bg-border/50" />
-        {activeProject &&
-        activeProjectDetails &&
-        status[activeProject] === ProjectConnectionStatus.Connected ? (
-          <div className="flex items-center gap-1.5 bg-accent rounded-full px-2.5 py-0.5 text-xs text-muted-foreground">
-            <div className="h-2 w-2 rounded-full bg-success shadow-[0_0_6px_oklch(0.65_0.18_150)]" />
-            <span className="font-mono">{activeProject}</span>
-            <span className="text-muted-foreground/50">&bull;</span>
-            <span>
-              {activeProjectDetails.host}:{activeProjectDetails.port}
-            </span>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            {Object.keys(projects).length > 0 ? (
-              <select
-                className="bg-input border border-border/50 text-foreground font-mono text-xs rounded-lg px-2 py-1"
-                value={activeProject ?? ""}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    const tabId = tabIdAt(selectedTabIndex);
-                    if (tabId) setProjectId(tabId, e.target.value);
-                  }
-                }}
-              >
-                <option value="">Select connection...</option>
-                {Object.entries(projects).map(([id, details]) => (
-                  <option key={id} value={id}>
-                    {id} ({details.database})
-                    {status[id] === ProjectConnectionStatus.Connected ? "" : " \u2022 disconnected"}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="text-xs text-muted-foreground">No connection</span>
-            )}
-          </div>
-        )}
       </div>
 
       <div className="flex items-center gap-2">
@@ -175,6 +137,18 @@ export function TopBar({
         >
           <DatabaseBackup className="h-4 w-4" />
           <ChevronDown className="h-3 w-3 opacity-60" />
+        </Button>
+
+        <div className="h-4 w-px bg-border/50" />
+
+        <Button
+          variant={rowDetailPanelOpen ? "outline" : "ghost"}
+          size="icon"
+          className="h-8 w-8"
+          title="Toggle row detail panel"
+          onClick={toggleRowDetailPanel}
+        >
+          <PanelRight className="h-4 w-4" />
         </Button>
 
         <div className="h-4 w-px bg-border/50" />

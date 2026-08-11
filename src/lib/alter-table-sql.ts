@@ -57,43 +57,89 @@ export interface StructureEditorState {
   indexes: DraftIndex[];
 }
 
+/** Every column type Postgres ships built in — covers the full CREATE TABLE type dropdown,
+ *  not just the handful people reach for most often. */
 export const PG_COMMON_TYPES = [
+  // Numeric
+  "smallint",
   "integer",
   "bigint",
-  "smallint",
-  "serial",
-  "bigserial",
-  "text",
-  "varchar",
-  "char",
-  "boolean",
-  "date",
-  "timestamp",
-  "timestamptz",
-  "time",
-  "timetz",
-  "interval",
+  "decimal",
   "numeric",
   "real",
   "double precision",
+  "smallserial",
+  "serial",
+  "bigserial",
   "money",
-  "uuid",
-  "json",
-  "jsonb",
+  // Character
+  "character varying",
+  "varchar",
+  "character",
+  "char",
+  "text",
+  // Binary
   "bytea",
-  "inet",
-  "cidr",
-  "macaddr",
+  // Date/time
+  "timestamp",
+  "timestamp with time zone",
+  "timestamptz",
+  "date",
+  "time",
+  "time with time zone",
+  "timetz",
+  "interval",
+  // Boolean
+  "boolean",
+  // Geometric
   "point",
   "line",
-  "polygon",
+  "lseg",
   "box",
-  "xml",
-  "tsquery",
+  "path",
+  "polygon",
+  "circle",
+  // Network address
+  "cidr",
+  "inet",
+  "macaddr",
+  "macaddr8",
+  // Bit string
+  "bit",
+  "bit varying",
+  "varbit",
+  // Text search
   "tsvector",
-  "int[]",
+  "tsquery",
+  // UUID
+  "uuid",
+  // XML
+  "xml",
+  // JSON
+  "json",
+  "jsonb",
+  // Range
+  "int4range",
+  "int8range",
+  "numrange",
+  "tsrange",
+  "tstzrange",
+  "daterange",
+  // Multirange (PG 14+)
+  "int4multirange",
+  "int8multirange",
+  "nummultirange",
+  "tsmultirange",
+  "tstzmultirange",
+  "datemultirange",
+  // Log sequence number
+  "pg_lsn",
+  // Common array shapes
+  "integer[]",
   "text[]",
+  "varchar[]",
   "jsonb[]",
+  "uuid[]",
 ];
 
 export const FK_ACTIONS = ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"];
@@ -235,6 +281,124 @@ export function generateAlterTableSQL(
   }
 
   return stmts;
+}
+
+export interface DraftTrigger {
+  _id: string;
+  name: string;
+  timing: "BEFORE" | "AFTER";
+  events: ("INSERT" | "UPDATE" | "DELETE" | "TRUNCATE")[];
+  forEachRow: boolean;
+  functionSchema: string;
+  functionName: string;
+}
+
+/** Skips triggers still missing a name, an event, or a function — same "ignore incomplete
+ *  drafts" behavior as the other CREATE TABLE sections instead of erroring on them. */
+export function generateCreateTriggerSQL(
+  schema: string,
+  table: string,
+  triggers: DraftTrigger[],
+): string[] {
+  const target = `${quoteIdent(schema)}.${quoteIdent(table)}`;
+  return triggers
+    .filter((t) => t.name.trim() && t.events.length > 0 && t.functionName.trim())
+    .map((t) => {
+      const fn = `${quoteIdent(t.functionSchema.trim() || schema)}.${quoteIdent(t.functionName.trim())}`;
+      return (
+        `CREATE TRIGGER ${quoteIdent(t.name.trim())} ${t.timing} ${t.events.join(" OR ")} ` +
+        `ON ${target} FOR EACH ${t.forEachRow ? "ROW" : "STATEMENT"} EXECUTE FUNCTION ${fn}();`
+      );
+    });
+}
+
+/** Returns a human-readable error if any trigger draft is incomplete, else null. */
+export function validateDraftTriggers(triggers: DraftTrigger[]): string | null {
+  for (const t of triggers) {
+    if (!t.name.trim()) return "Trigger name cannot be empty";
+    if (t.events.length === 0) return `Trigger "${t.name}" needs at least one event`;
+    if (!t.functionName.trim()) return `Trigger "${t.name}" needs a function to execute`;
+  }
+  const seen = new Set<string>();
+  for (const t of triggers) {
+    const name = t.name.trim();
+    if (seen.has(name)) return `Duplicate trigger name "${name}"`;
+    seen.add(name);
+  }
+  return null;
+}
+
+export function generateCreateTableSQL(
+  schema: string,
+  table: string,
+  draft: StructureEditorState,
+  triggers: DraftTrigger[] = [],
+): string[] {
+  const target = `${quoteIdent(schema)}.${quoteIdent(table)}`;
+  const activeColumns = draft.columns.filter((c) => c._status !== "removed");
+
+  const colDefs = activeColumns.map((col) => {
+    let def = `${quoteIdent(col.name)} ${col.dataType}`;
+    if (!col.nullable) def += " NOT NULL";
+    if (col.defaultValue) def += ` DEFAULT ${col.defaultValue}`;
+    return def;
+  });
+  if (
+    draft.primaryKey &&
+    draft.primaryKey._status !== "removed" &&
+    draft.primaryKey.columns.length > 0
+  ) {
+    colDefs.push(`PRIMARY KEY (${draft.primaryKey.columns.map(quoteIdent).join(", ")})`);
+  }
+
+  const stmts = [`CREATE TABLE ${target} (\n  ${colDefs.join(",\n  ")}\n);`];
+
+  for (const uc of draft.uniqueConstraints) {
+    if (uc._status === "removed") continue;
+    const ucCols = uc.columns.map(quoteIdent).join(", ");
+    stmts.push(
+      `ALTER TABLE ${target} ADD CONSTRAINT ${quoteIdent(uc.constraintName)} UNIQUE (${ucCols});`,
+    );
+  }
+
+  for (const idx of draft.indexes) {
+    if (idx._status === "removed") continue;
+    const idxCols = idx.columns.map(quoteIdent).join(", ");
+    const unique = idx.isUnique ? "UNIQUE " : "";
+    stmts.push(`CREATE ${unique}INDEX ${quoteIdent(idx.indexName)} ON ${target} (${idxCols});`);
+  }
+
+  for (const fk of draft.foreignKeys) {
+    if (fk._status === "removed") continue;
+    const srcCols = fk.sourceColumns.map(quoteIdent).join(", ");
+    const tgtCols = fk.targetColumns.map(quoteIdent).join(", ");
+    const tgtTable = `${quoteIdent(fk.targetSchema)}.${quoteIdent(fk.targetTable)}`;
+    stmts.push(
+      `ALTER TABLE ${target} ADD CONSTRAINT ${quoteIdent(fk.constraintName)} ` +
+        `FOREIGN KEY (${srcCols}) REFERENCES ${tgtTable} (${tgtCols}) ` +
+        `ON UPDATE ${fk.onUpdate} ON DELETE ${fk.onDelete};`,
+    );
+  }
+
+  stmts.push(...generateCreateTriggerSQL(schema, table, triggers));
+
+  return stmts;
+}
+
+/** Returns a human-readable error if the draft's columns are invalid, else null. */
+export function validateDraftColumns(state: StructureEditorState): string | null {
+  const active = state.columns.filter((c) => c._status !== "removed");
+  for (const col of active) {
+    if (!col.name.trim()) return "Column name cannot be empty";
+    if (!col.dataType.trim()) return `Column "${col.name}" needs a data type`;
+  }
+  const seen = new Set<string>();
+  for (const col of active) {
+    const name = col.name.trim();
+    if (seen.has(name)) return `Duplicate column name "${name}"`;
+    seen.add(name);
+  }
+  return null;
 }
 
 export function countChanges(state: StructureEditorState): number {

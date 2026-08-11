@@ -37,6 +37,12 @@ export function buildModifiedOverride(theme: string) {
   return { bgCell: theme === "dark" ? "rgba(245, 158, 11, 0.15)" : "rgba(245, 158, 11, 0.1)" };
 }
 
+/// Staged draft rows and the blank row waiting for the next one — a different
+/// tint from "modified" so a not-yet-saved row reads as new, not edited.
+export function buildInsertOverride(theme: string) {
+  return { bgCell: theme === "dark" ? "rgba(34, 197, 94, 0.12)" : "rgba(34, 197, 94, 0.08)" };
+}
+
 export const FK_OVERRIDE = { textDark: "hsl(220, 70%, 50%)", textLight: "hsl(220, 70%, 65%)" };
 
 /// SQL NULL is drawn muted and labelled, so it never looks like an empty string
@@ -92,6 +98,10 @@ export interface CellContentContext {
   deletedOverride: typeof DELETED_OVERRIDE;
   modifiedOverride: ReturnType<typeof buildModifiedOverride>;
   fkOverride: typeof FK_OVERRIDE;
+  /// Grid row position where staged/blank insert rows begin — everything from
+  /// here on is `insertOverride`-tinted instead of the usual edit styling.
+  insertRowStart?: number;
+  insertOverride?: ReturnType<typeof buildInsertOverride>;
 }
 
 /// A non-editable cell that keeps SQL NULL visually distinct from "".
@@ -123,6 +133,8 @@ export function buildCellContent(cell: Item, ctx: CellContentContext): GridCell 
     deletedOverride,
     modifiedOverride,
     fkOverride,
+    insertRowStart,
+    insertOverride,
   } = ctx;
 
   // Virtual mode: read from cache
@@ -138,6 +150,7 @@ export function buildCellContent(cell: Item, ctx: CellContentContext): GridCell 
     return readonlyCell(row[colIdx]);
   }
 
+  const isInsertRow = insertRowStart !== undefined && rowIdx >= insertRowStart;
   const trueRowIdx = rowIndexMap ? rowIndexMap[rowIdx] : rowIdx;
   const key = `${trueRowIdx}:${colIdx}`;
   const isModified = cellEdits?.has(key);
@@ -146,17 +159,25 @@ export function buildCellContent(cell: Item, ctx: CellContentContext): GridCell 
   const isNull = raw === null;
   const value = raw ?? "";
   const isFK = fkColIndices.has(colIdx);
-  const canOverlay = (!!isEditing || !!editable) && !isFK && !isDeleted;
+  // `editable` alone (no active session) only opens a real cell's overlay
+  // when double-clicking would insert, not update — an existing row stays
+  // read-only until a session is actually open, matching the "Edit" button.
+  const canOverlay = (!!isEditing || (isInsertRow && !!editable)) && !isFK && !isDeleted;
 
+  // The blank invitation row stays plain until double-clicking it actually
+  // starts a session — only then does it (and any further draft rows) read
+  // as "new, not saved yet" rather than looking like an active row already.
   const themeOverride = isDeleted
     ? deletedOverride
-    : isModified
-      ? modifiedOverride
-      : isNull
-        ? NULL_OVERRIDE
-        : isFK
-          ? fkOverride
-          : undefined;
+    : isInsertRow && isEditing
+      ? insertOverride
+      : isModified
+        ? modifiedOverride
+        : isNull
+          ? NULL_OVERRIDE
+          : isFK
+            ? fkOverride
+            : undefined;
 
   // Type info drives read-only display formatting regardless of edit access; the richer
   // input widgets only take over the cell when it is actually editable.
@@ -179,7 +200,14 @@ export function buildCellContent(cell: Item, ctx: CellContentContext): GridCell 
       info?.kind === "time" ||
       info?.kind === "timestamp")
   ) {
-    return makeTypedEditCell(value, info.kind, info.enumValues, !canOverlay, themeOverride);
+    return makeTypedEditCell(
+      value,
+      info.kind,
+      info.enumValues,
+      !canOverlay,
+      themeOverride,
+      info.nullable,
+    );
   }
 
   // A NULL foreign key still renders as an FK cell so it can be assigned through the

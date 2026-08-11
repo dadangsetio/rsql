@@ -19,7 +19,7 @@ export interface ToolbarProps {
   editableTable: boolean;
   isCommitting: boolean;
   editError: string | null;
-  pending: { updates: number; deletes: number };
+  pending: { updates: number; deletes: number; inserts: number };
   sessionMatchesEditor: boolean;
   confirmingApply: boolean;
   onEnterEdit: () => void;
@@ -32,4 +32,5 @@ export interface ToolbarProps {
   filterOpen: boolean;
   hasActiveFilter: boolean;
   onToggleFilter: () => void;
+  onFitColumns: () => void;
 }

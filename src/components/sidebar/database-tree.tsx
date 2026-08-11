@@ -11,6 +11,7 @@ import {
   Link2,
   Loader2,
   Lock,
+  Pencil,
   Plus,
   RefreshCw,
   ScrollText,
@@ -34,6 +35,9 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
   const status = useProjectStore((s) => s.status[projectId]);
   const schemasRaw = useProjectStore((s) => s.schemas[projectId]);
   const schemas = schemasRaw || [];
+  // Matches the schema `connect()` already warms and loads tables for, so the
+  // tree opens straight to it instead of landing on a collapsed schema list.
+  const preferredSchema = schemas.includes("public") ? "public" : schemas[0];
   const tables = useProjectStore((s) => s.tables);
   const columnDetails = useProjectStore((s) => s.columnDetails);
   const indexes = useProjectStore((s) => s.indexes);
@@ -55,6 +59,8 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
   const openTab = useTabStore((s) => s.openTab);
   const openERDTab = useTabStore((s) => s.openERDTab);
   const openRolesTab = useTabStore((s) => s.openRolesTab);
+  const openNewTableTab = useTabStore((s) => s.openNewTableTab);
+  const openObjectPanelTab = useTabStore((s) => s.openObjectPanelTab);
   const { menu, showMenu, closeMenu } = useContextMenu();
 
   const [propsModal, setPropsModal] = React.useState<{
@@ -118,6 +124,13 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
       }
     }
   };
+
+  const onNewTable = (schema: string) => openNewTableTab(projectId, schema);
+  const onNewView = (schema: string) => openObjectPanelTab(projectId, { kind: "view", schema });
+  const onNewMatview = (schema: string) =>
+    openObjectPanelTab(projectId, { kind: "matview", schema });
+  const onNewFunction = (schema: string) =>
+    openObjectPanelTab(projectId, { kind: "function", schema, isProcedure: false });
 
   const onOpenTableQuery = (schema: string, table: string) => {
     const sql = `SELECT * FROM "${schema}"."${table}" LIMIT 100;`;
@@ -215,7 +228,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
           const schemaMatViews = materializedViews[schemaStoreKey];
           const schemaFns = functions[schemaStoreKey];
           const schemaTrigFns = triggerFunctions[schemaStoreKey];
-          const isSchemaOpen = isOpen(sKey);
+          const isSchemaOpen = isOpen(sKey, schema === preferredSchema);
 
           return (
             <div key={schema}>
@@ -237,6 +250,27 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                       label: "Copy Schema Name",
                       icon: <Copy className="h-3 w-3" />,
                       onClick: () => copy(schema),
+                    },
+                    { separator: true as const },
+                    {
+                      label: "New Table",
+                      icon: <Plus className="h-3 w-3" />,
+                      onClick: () => onNewTable(schema),
+                    },
+                    {
+                      label: "New View",
+                      icon: <Plus className="h-3 w-3" />,
+                      onClick: () => onNewView(schema),
+                    },
+                    {
+                      label: "New Materialized View",
+                      icon: <Plus className="h-3 w-3" />,
+                      onClick: () => onNewMatview(schema),
+                    },
+                    {
+                      label: "New Function or Procedure",
+                      icon: <Plus className="h-3 w-3" />,
+                      onClick: () => onNewFunction(schema),
                     },
                     {
                       label: "New Query",
@@ -306,6 +340,12 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                       projectId,
                                       `SELECT COUNT(*) FROM "${schema}"."${ti.name}";`,
                                     ),
+                                },
+                                { separator: true as const },
+                                {
+                                  label: "New Table",
+                                  icon: <Plus className="h-3 w-3" />,
+                                  onClick: () => onNewTable(schema),
                                 },
                                 { separator: true as const },
                                 {
@@ -596,6 +636,16 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   },
                                   { separator: true as const },
                                   {
+                                    label: "Edit",
+                                    icon: <Pencil className="h-3 w-3" />,
+                                    onClick: () =>
+                                      openObjectPanelTab(projectId, {
+                                        kind: "view",
+                                        schema,
+                                        name: v,
+                                      }),
+                                  },
+                                  {
                                     label: "Properties",
                                     icon: <Settings2 className="h-3 w-3" />,
                                     onClick: () => openProperties("view", schema, v),
@@ -662,6 +712,16 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   },
                                   { separator: true as const },
                                   {
+                                    label: "Edit",
+                                    icon: <Pencil className="h-3 w-3" />,
+                                    onClick: () =>
+                                      openObjectPanelTab(projectId, {
+                                        kind: "matview",
+                                        schema,
+                                        name: mv,
+                                      }),
+                                  },
+                                  {
                                     label: "Properties",
                                     icon: <Settings2 className="h-3 w-3" />,
                                     onClick: () => openProperties("matview", schema, mv),
@@ -713,6 +773,17 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                     icon: <FileCode className="h-3 w-3" />,
                                     onClick: () =>
                                       openTab(projectId, ddlFunctionQuery(schema, fn.name)),
+                                  },
+                                  {
+                                    label: "Edit",
+                                    icon: <Pencil className="h-3 w-3" />,
+                                    onClick: () =>
+                                      openObjectPanelTab(projectId, {
+                                        kind: "function",
+                                        schema,
+                                        name: fn.name,
+                                        isProcedure: false,
+                                      }),
                                   },
                                   {
                                     label: "Properties",

@@ -35,12 +35,29 @@ export type TabType =
   | "enums"
   | "pg-settings";
 
+export interface ObjectPanelSpec {
+  kind: "view" | "matview" | "function";
+  schema: string;
+  /** Present = editing this existing object; absent = creating a new one. */
+  name?: string;
+  /** Only meaningful when kind === "function": toggles Function vs Procedure. */
+  isProcedure?: boolean;
+}
+
 export interface Tab {
   id: string;
   type: TabType;
   projectId?: string;
   schema?: string;
   title: string;
+  /** Set on a "query" tab that's actually the New Table column editor for this schema,
+   *  instead of the normal SQL editor + results — reuses the query tab/pane rather than
+   *  introducing a separate tab type. */
+  newTableSchema?: string;
+  /** Set on a "query" tab that's actually the View/Matview/Function/Procedure editor
+   *  panel, instead of the normal SQL editor + results. `name` present = editing an
+   *  existing object (prefilled); absent = creating a new one. */
+  objectPanel?: ObjectPanelSpec;
   editorValue: string;
   isExecuting: boolean;
   /** Identifies the in-flight query so cancel targets this tab's query only. */

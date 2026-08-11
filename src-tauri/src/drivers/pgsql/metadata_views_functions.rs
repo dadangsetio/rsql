@@ -174,7 +174,9 @@ pub async fn load_function_info(
                  p.prorows::text,
                  pg_get_function_result(p.oid),
                  pg_get_function_arguments(p.oid),
-                 p.prosrc
+                 p.prosrc,
+                 p.prokind::text,
+                 CASE p.proparallel WHEN 's' THEN 'SAFE' WHEN 'r' THEN 'RESTRICTED' WHEN 'u' THEN 'UNSAFE' ELSE '' END
                FROM pg_proc p
                JOIN pg_namespace n ON n.oid = p.pronamespace
                JOIN pg_language l ON l.oid = p.prolang
@@ -195,6 +197,8 @@ pub async fn load_function_info(
         "return_type",
         "arguments",
         "source",
+        "prokind",
+        "parallel_safety",
     ];
 
     if let Some(row) = rows.first() {

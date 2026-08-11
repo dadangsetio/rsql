@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import { serverFingerprint } from "@/lib/server-groups";
 import type { CellValue } from "@/lib/wire";
 import { useProjectStore } from "@/stores/project-store";
 import type { QueryResult } from "@/types";
@@ -32,6 +33,8 @@ interface UIState {
   connectionModalOpen: boolean;
   viewMode: "grid" | "record";
   selectedRow: number;
+  rowDetailPanelOpen: boolean;
+  rowDetailPanelWidth: number;
   pinnedResult: PinnedResult | null;
   editorCollapsed: boolean;
   editorPosition: "top" | "right" | "bottom" | "left";
@@ -40,6 +43,10 @@ interface UIState {
   activeDatabaseTab: string | null;
   connectionPickerOpen: boolean;
   databasePickerOpen: boolean;
+  /** Server fingerprint -> the database project last opened on it, so reopening
+   * that server (e.g. from the connection picker) lands back on it instead of
+   * always defaulting to the server's first configured database. */
+  lastActiveDatabaseByServer: Record<string, string>;
 
   toggleTheme: () => void;
   setTheme: (theme: "light" | "dark") => void;
@@ -48,6 +55,8 @@ interface UIState {
   setConnectionModalOpen: (open: boolean) => void;
   setViewMode: (mode: "grid" | "record") => void;
   setSelectedRow: (row: number | ((prev: number) => number)) => void;
+  toggleRowDetailPanel: () => void;
+  setRowDetailPanelWidth: (delta: number) => void;
   pinResult: (result: QueryResult, label: string) => void;
   clearPinnedResult: () => void;
   toggleEditorCollapsed: () => void;
@@ -72,6 +81,8 @@ export const useUIStore = create<UIState>()(
     connectionModalOpen: false,
     viewMode: "grid",
     selectedRow: 0,
+    rowDetailPanelOpen: false,
+    rowDetailPanelWidth: 320,
     pinnedResult: null,
     editorCollapsed: false,
     editorPosition: "bottom",
@@ -80,6 +91,7 @@ export const useUIStore = create<UIState>()(
     activeDatabaseTab: null,
     connectionPickerOpen: false,
     databasePickerOpen: false,
+    lastActiveDatabaseByServer: {},
 
     toggleTheme: () => {
       set((s) => {
@@ -130,6 +142,17 @@ export const useUIStore = create<UIState>()(
       });
     },
 
+    toggleRowDetailPanel: () =>
+      set((s) => {
+        s.rowDetailPanelOpen = !s.rowDetailPanelOpen;
+      }),
+
+    setRowDetailPanelWidth: (delta) => {
+      set((s) => {
+        s.rowDetailPanelWidth = Math.max(240, Math.min(600, s.rowDetailPanelWidth + delta));
+      });
+    },
+
     pinResult: (result, label) => {
       set((s) => {
         s.pinnedResult = { columns: result.columns, rows: result.rows, label };
@@ -156,9 +179,11 @@ export const useUIStore = create<UIState>()(
     setActiveDatabaseTab: (projectId) => set({ activeDatabaseTab: projectId }),
 
     openDatabaseTab: (projectId) => {
+      const project = useProjectStore.getState().projects[projectId];
       set((s) => {
         if (!s.openDatabaseTabs.includes(projectId)) s.openDatabaseTabs.push(projectId);
         s.activeDatabaseTab = projectId;
+        if (project) s.lastActiveDatabaseByServer[serverFingerprint(project)] = projectId;
       });
       const status = useProjectStore.getState().status[projectId];
       if (

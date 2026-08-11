@@ -10,6 +10,7 @@ import {
   Pin,
   Search,
   Square,
+  UnfoldHorizontal,
   X,
 } from "lucide-react";
 import { useUIStore } from "@/stores/ui-store";
@@ -49,6 +50,7 @@ export function ResultsToolbar(props: ToolbarProps) {
     filterOpen,
     hasActiveFilter,
     onToggleFilter,
+    onFitColumns,
   } = props;
 
   const pinnedResult = useUIStore((s) => s.pinnedResult);
@@ -156,6 +158,14 @@ export function ResultsToolbar(props: ToolbarProps) {
             <span className="text-muted-foreground/50">&bull;</span>
             <Clock className="h-3 w-3" />
             <span>{result.time.toFixed(0)}ms</span>
+            {isEditing && pending.inserts ? (
+              <>
+                <span className="text-muted-foreground/50">&bull;</span>
+                <span className="text-success font-medium">
+                  {pending.inserts} insert{pending.inserts !== 1 ? "s" : ""}
+                </span>
+              </>
+            ) : null}
             {isEditing && pending.updates ? (
               <>
                 <span className="text-muted-foreground/50">&bull;</span>
@@ -269,6 +279,18 @@ export function ResultsToolbar(props: ToolbarProps) {
             {/* Export dropdown */}
             {panelView !== "history" && result && result.rows.length > 0 && !virtualQuery && (
               <ToolbarExport columns={columns} filteredRows={filteredRows} hasResult={!!result} />
+            )}
+
+            {/* Fit columns — drops any manually dragged widths back to fit-to-content */}
+            {panelView === "grid" && viewMode === "grid" && result && columns.length > 0 && (
+              <button
+                type="button"
+                onClick={onFitColumns}
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                title="Fit columns to content"
+              >
+                <UnfoldHorizontal className="h-3 w-3" />
+              </button>
             )}
 
             {/* Search */}

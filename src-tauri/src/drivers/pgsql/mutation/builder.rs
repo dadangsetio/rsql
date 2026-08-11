@@ -20,14 +20,17 @@ use crate::common::enums::AppError;
 pub enum MutationKind {
     Update,
     Delete,
+    Insert,
 }
 
-/// One row mutation. `None` values are SQL NULL.
+/// One row mutation. `None` values are SQL NULL. `pk` is unused for `Insert` —
+/// a new row has no key to match against yet.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RowMutation {
     pub kind: MutationKind,
     #[serde(default)]
     pub set: Vec<(String, Option<String>)>,
+    #[serde(default)]
     pub pk: Vec<(String, Option<String>)>,
 }
 
@@ -126,6 +129,29 @@ pub fn build_statement(
                 target,
                 assignments.join(", "),
                 where_clause
+            )
+        }
+        MutationKind::Insert => {
+            if mutation.set.is_empty() {
+                return Err(AppError::QueryFailed(
+                    "Refusing to build an INSERT with no columns set".into(),
+                ));
+            }
+
+            let mut idents = Vec::with_capacity(mutation.set.len());
+            let mut placeholders = Vec::with_capacity(mutation.set.len());
+            for (column, value) in &mutation.set {
+                let ty = column_type(types, column)?;
+                params.push(value.clone());
+                idents.push(quote_ident(column));
+                placeholders.push(format!("${}::text::{}", params.len(), ty));
+            }
+
+            format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                target,
+                idents.join(", "),
+                placeholders.join(", ")
             )
         }
     };
@@ -295,6 +321,44 @@ mod tests {
         };
         let err = build_statement("public", "t", &mutation, &types()).unwrap_err();
         assert!(err.to_string().contains("no assignments"));
+    }
+
+    #[test]
+    fn insert_lists_columns_and_casts_each_value_to_its_type() {
+        let mutation = RowMutation {
+            kind: MutationKind::Insert,
+            set: vec![("id".into(), cell("7")), ("name".into(), cell("ada"))],
+            pk: vec![],
+        };
+        let built = build_statement("public", "t", &mutation, &types()).unwrap();
+        assert_eq!(
+            built.sql,
+            "INSERT INTO \"public\".\"t\" (\"id\", \"name\") \
+             VALUES ($1::text::bigint, $2::text::character varying(255))"
+        );
+        assert_eq!(built.params, vec![cell("7"), cell("ada")]);
+    }
+
+    #[test]
+    fn insert_binds_a_null_column_as_null_rather_than_the_text_null() {
+        let mutation = RowMutation {
+            kind: MutationKind::Insert,
+            set: vec![("note".into(), None)],
+            pk: vec![],
+        };
+        let built = build_statement("public", "t", &mutation, &types()).unwrap();
+        assert_eq!(built.params, vec![None]);
+    }
+
+    #[test]
+    fn an_insert_with_no_columns_set_is_refused() {
+        let mutation = RowMutation {
+            kind: MutationKind::Insert,
+            set: vec![],
+            pk: vec![],
+        };
+        let err = build_statement("public", "t", &mutation, &types()).unwrap_err();
+        assert!(err.to_string().contains("no columns set"));
     }
 
     #[test]

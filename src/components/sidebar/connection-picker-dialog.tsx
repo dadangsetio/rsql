@@ -48,7 +48,11 @@ export function ConnectionPickerDialog({
 
   const selectServer = (fp: string, pids: string[]) => {
     setActiveServerFp(fp);
-    const defaultPid = pids.find((p) => status[p] === ProjectConnectionStatus.Connected) ?? pids[0];
+    const lastActive = useUIStore.getState().lastActiveDatabaseByServer[fp];
+    const defaultPid =
+      (lastActive && pids.includes(lastActive) ? lastActive : undefined) ??
+      pids.find((p) => status[p] === ProjectConnectionStatus.Connected) ??
+      pids[0];
     openDatabaseTab(defaultPid);
     onOpenChange(false);
   };

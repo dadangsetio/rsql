@@ -1,7 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Toaster } from "sonner";
 import { CommandPalette } from "@/components/command-palette";
 import { ConnectionModal } from "@/components/connection-modal";
+import { CreateFunctionPanel } from "@/components/create-function-panel";
+import { CreateTablePanel } from "@/components/create-table-panel";
+import { CreateViewPanel } from "@/components/create-view-panel";
 import { EditorToolbar } from "@/components/editor-toolbar";
 import { EnumsPanel } from "@/components/enums-panel";
 import { ERDDiagram } from "@/components/erd-diagram";
@@ -53,6 +56,14 @@ export default function App() {
   const activeTabId = useActiveTabId();
   const activeTab = useActiveTab();
   const updateContent = useTabStore((s) => s.updateContent);
+
+  // Sidebar connection follows whichever tab is active (or just opened).
+  const activeTabProjectId = activeTab?.projectId;
+  useEffect(() => {
+    if (!activeTabProjectId) return;
+    if (useUIStore.getState().activeDatabaseTab === activeTabProjectId) return;
+    useUIStore.getState().openDatabaseTab(activeTabProjectId);
+  }, [activeTabProjectId]);
 
   const [editingConnection, setEditingConnection] = useState<{
     name: string;
@@ -181,6 +192,40 @@ export default function App() {
           ) : activeTab?.type === "erd" && activeTab.projectId && activeTab.schema ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <ERDDiagram projectId={activeTab.projectId} schema={activeTab.schema} />
+            </div>
+          ) : activeTab?.type === "query" && activeTab.newTableSchema && activeTab.projectId ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <CreateTablePanel
+                projectId={activeTab.projectId}
+                schema={activeTab.newTableSchema}
+                tabId={activeTab.id}
+              />
+            </div>
+          ) : activeTab?.type === "query" &&
+            activeTab.objectPanel &&
+            activeTab.projectId &&
+            (activeTab.objectPanel.kind === "view" || activeTab.objectPanel.kind === "matview") ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <CreateViewPanel
+                projectId={activeTab.projectId}
+                schema={activeTab.objectPanel.schema}
+                tabId={activeTab.id}
+                isMaterialized={activeTab.objectPanel.kind === "matview"}
+                editName={activeTab.objectPanel.name}
+              />
+            </div>
+          ) : activeTab?.type === "query" &&
+            activeTab.objectPanel &&
+            activeTab.projectId &&
+            activeTab.objectPanel.kind === "function" ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <CreateFunctionPanel
+                projectId={activeTab.projectId}
+                schema={activeTab.objectPanel.schema}
+                tabId={activeTab.id}
+                initialIsProcedure={!!activeTab.objectPanel.isProcedure}
+                editName={activeTab.objectPanel.name}
+              />
             </div>
           ) : activeTab?.type === "terminal" ? (
             <div className="flex-1 min-h-0 overflow-hidden">

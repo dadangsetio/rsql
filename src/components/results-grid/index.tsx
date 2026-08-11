@@ -11,7 +11,17 @@ import DataEditor, {
   type Item,
   type Theme,
 } from "@glideapps/glide-data-grid";
-import { ExternalLink, Pencil } from "lucide-react";
+import {
+  ClipboardPaste,
+  Copy,
+  Download,
+  ExternalLink,
+  FileUp,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Rows3,
+} from "lucide-react";
 import {
   type MutableRefObject,
   useCallback,
@@ -22,10 +32,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import "@glideapps/glide-data-grid/dist/index.css";
+import { ContextMenu, type ContextMenuEntry } from "@/components/ui/context-menu";
 import type { ColumnEditInfo } from "@/lib/column-edit-kind";
-import type { CellValue } from "@/lib/wire";
+import { copyToClipboard, exportResults } from "@/lib/export";
+import { type CellValue, cellText } from "@/lib/wire";
 import { useUIStore } from "@/stores/ui-store";
 import type { SortState, VirtualQuery } from "@/types";
 import {
@@ -37,6 +48,7 @@ import {
 import {
   buildCellContent,
   buildGridTheme,
+  buildInsertOverride,
   buildModifiedOverride,
   computeFkColIndices,
   computeGridColumns,
@@ -59,6 +71,9 @@ interface ResultsGridProps {
   deletedRows?: Set<number>;
   /** Column name -> how to edit it (enum dropdown, date/timestamp picker, boolean toggle). */
   columnTypes?: Map<string, ColumnEditInfo>;
+  /** Grid row position where staged insert rows (and the trailing blank one) begin —
+   * tinted differently from an edited row and always considered editable, never deleted. */
+  insertRowStart?: number;
   onCellEdit?: (rowIndex: number, colIndex: number, value: CellValue) => void;
   onRowDelete?: (rowIndex: number) => void;
   onRowRestore?: (rowIndex: number) => void;
@@ -75,12 +90,28 @@ interface ResultsGridProps {
   sort?: SortState;
   /** Clicking a column header — cycles that column asc -> desc -> unsorted. */
   onSortColumn?: (colIndex: number) => void;
+  /** Right-click menu: re-run the current query. */
+  onRefresh?: () => void;
+  /** Right-click menu: start (or confirm) an edit session — same as double-clicking the blank row. */
+  onAddRow?: () => void;
+  /** Right-click menu: stage a new draft row seeded from the clicked row's values. */
+  onDuplicateRow?: (rowIndex: number) => void;
+  /** Right-click menu: stage one draft row per clipboard line, tab-separated, columns matched positionally. */
+  onPasteRows?: (rows: CellValue[][]) => void;
+  /** Right-click menu: open the CSV import dialog for the current table. */
+  onImport?: () => void;
   virtualQuery?: VirtualQuery;
   onPageNeeded?: (pageIndex: number) => void;
   onViewportRowChange?: (topRow: number) => void;
   restoreRowIndex?: number; // can be fractional when smooth scroll is active
   viewportKey?: string;
-  gridRef?: MutableRefObject<{ invalidatePage: (pageIndex: number) => void } | null>;
+  gridRef?: MutableRefObject<ResultsGridHandle | null>;
+}
+
+export interface ResultsGridHandle {
+  invalidatePage: (pageIndex: number) => void;
+  /** Drops any manually-resized column widths, going back to the auto-fit-to-content sizing. */
+  fitColumns: () => void;
 }
 
 function cellToCopyText(cell: GridCell): string {
@@ -104,6 +135,7 @@ export function ResultsGrid({
   cellEdits,
   deletedRows,
   columnTypes,
+  insertRowStart,
   onCellEdit,
   onRowDelete,
   onRowRestore,
@@ -114,6 +146,11 @@ export function ResultsGrid({
   onRowClick,
   sort,
   onSortColumn,
+  onRefresh,
+  onAddRow,
+  onDuplicateRow,
+  onPasteRows,
+  onImport,
   virtualQuery,
   onPageNeeded,
   onViewportRowChange,
@@ -126,6 +163,9 @@ export function ResultsGrid({
   const dataEditorRef = useRef<DataEditorRef>(null);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 400 });
   const visibleRangeRef = useRef({ y: 0, height: 0 });
+  // Column id -> a width the user dragged to, overriding the auto-fit-to-content
+  // one computeGridColumns would otherwise pick. Cleared by "fit columns".
+  const [columnWidthOverrides, setColumnWidthOverrides] = useState<Record<string, number>>({});
 
   useImperativeHandle(
     gridRef ?? { current: null },
@@ -155,6 +195,7 @@ export function ResultsGrid({
           dataEditorRef.current?.updateCells(cells);
         }
       },
+      fitColumns: () => setColumnWidthOverrides({}),
     }),
     [columns.length, containerSize.height, virtualQuery],
   );
@@ -182,10 +223,20 @@ export function ResultsGrid({
     };
   }, []);
 
-  const gridColumns = useMemo(
-    (): GridColumn[] => computeGridColumns(columns, rows, sort),
-    [columns, rows, sort],
-  );
+  const gridColumns = useMemo((): GridColumn[] => {
+    const computed = computeGridColumns(columns, rows, sort);
+    if (Object.keys(columnWidthOverrides).length === 0) return computed;
+    return computed.map((col) =>
+      columnWidthOverrides[col.id ?? ""] !== undefined
+        ? { ...col, width: columnWidthOverrides[col.id ?? ""] }
+        : col,
+    );
+  }, [columns, rows, sort, columnWidthOverrides]);
+
+  const handleColumnResize = useCallback((column: GridColumn, newSize: number) => {
+    if (!column.id) return;
+    setColumnWidthOverrides((prev) => ({ ...prev, [column.id as string]: newSize }));
+  }, []);
 
   // Per-column edit widget kind, aligned to `columns` — undefined means plain text.
   const colEditInfo = useMemo(
@@ -199,6 +250,7 @@ export function ResultsGrid({
   const deletedOverride = useMemo(() => DELETED_OVERRIDE, []);
   const modifiedOverride = useMemo(() => buildModifiedOverride(theme), [theme]);
   const fkOverride = useMemo(() => FK_OVERRIDE, []);
+  const insertOverride = useMemo(() => buildInsertOverride(theme), [theme]);
 
   const totalRowCount = virtualQuery ? virtualQuery.totalRows : rows.length;
 
@@ -231,6 +283,8 @@ export function ResultsGrid({
         deletedOverride,
         modifiedOverride,
         fkOverride,
+        insertRowStart,
+        insertOverride,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -247,6 +301,8 @@ export function ResultsGrid({
       fkOverride,
       modifiedOverride,
       deletedOverride,
+      insertRowStart,
+      insertOverride,
     ],
   );
 
@@ -345,8 +401,12 @@ export function ResultsGrid({
   // arrow hotspot — that click already navigated, and shouldn't also pop the picker open.
   const handleCellActivated = useCallback(
     (cell: Item) => {
-      if (virtualQuery || !onFKPickerOpen || (!isEditing && !editable)) return;
+      if (virtualQuery || !onFKPickerOpen) return;
       const [colIdx, rowIdx] = cell;
+      const isInsertRow = insertRowStart !== undefined && rowIdx >= insertRowStart;
+      // Same rule as canOverlay in buildCellContent: `editable` alone only
+      // opens the picker on the insert row — an existing row needs a session.
+      if (!isEditing && !(isInsertRow && editable)) return;
       if (!fkColIndices.has(colIdx)) return;
       const last = lastFKClickRef.current;
       if (last.col === colIdx && last.row === rowIdx && last.inArrow) return;
@@ -354,45 +414,175 @@ export function ResultsGrid({
       if (deletedRows?.has(trueRowIdx)) return;
       onFKPickerOpen(trueRowIdx, colIdx);
     },
-    [virtualQuery, onFKPickerOpen, isEditing, editable, fkColIndices, rowIndexMap, deletedRows],
+    [
+      virtualQuery,
+      onFKPickerOpen,
+      isEditing,
+      editable,
+      fkColIndices,
+      rowIndexMap,
+      deletedRows,
+      insertRowStart,
+    ],
   );
 
-  // Right-click on an FK cell → small menu offering both actions explicitly, instead of relying
-  // solely on the arrow hotspot / double-click gestures.
-  const [fkMenu, setFkMenu] = useState<{
+  // Right-click on any cell → a menu of row/cell actions, plus FK-specific ones
+  // (edit via the relation picker, open the related row) when the column is one.
+  const [cellMenu, setCellMenu] = useState<{
     x: number;
     y: number;
     rowIndex: number;
     colIndex: number;
-    colName: string;
-    value: string;
   } | null>(null);
+  const closeCellMenu = useCallback(() => setCellMenu(null), []);
 
-  const handleCellContextMenu = useCallback(
-    (cell: Item, event: CellClickedEventArgs) => {
-      if (virtualQuery) return;
-      const [colIdx, rowIdx] = cell;
-      if (!fkColIndices.has(colIdx)) return;
-      event.preventDefault();
-      setFkMenu({
-        x: event.bounds.x + event.localEventX,
-        y: event.bounds.y + event.localEventY,
-        rowIndex: rowIdx,
-        colIndex: colIdx,
-        colName: columns[colIdx],
-        value: rows[rowIdx]?.[colIdx] ?? "",
-      });
-    },
-    [virtualQuery, fkColIndices, columns, rows],
-  );
+  const handlePaste = useCallback(async () => {
+    if (!onPasteRows) return;
+    const text = await navigator.clipboard.readText();
+    if (!text.trim()) return;
+    const parsed = text
+      .split(/\r?\n/)
+      .filter((line) => line.length > 0)
+      .map((line) => line.split("\t"));
+    onPasteRows(parsed);
+  }, [onPasteRows]);
 
-  const closeFkMenu = useCallback(() => setFkMenu(null), []);
+  const handleCellContextMenu = useCallback((cell: Item, event: CellClickedEventArgs) => {
+    const [colIdx, rowIdx] = cell;
+    event.preventDefault();
+    setCellMenu({
+      x: event.bounds.x + event.localEventX,
+      y: event.bounds.y + event.localEventY,
+      rowIndex: rowIdx,
+      colIndex: colIdx,
+    });
+  }, []);
 
-  const fkMenuCanEdit =
-    !!onFKPickerOpen &&
-    (!!isEditing || !!editable) &&
-    !deletedRows?.has(fkMenu ? (rowIndexMap ? rowIndexMap[fkMenu.rowIndex] : fkMenu.rowIndex) : -1);
-  const fkMenuCanOpen = !!onFKNavigate && !!fkMenu && fkMenu.value !== "";
+  const cellMenuItems = useMemo((): ContextMenuEntry[] => {
+    if (!cellMenu) return [];
+    const { rowIndex, colIndex } = cellMenu;
+    const colName = columns[colIndex];
+    const cellValue = rows[rowIndex]?.[colIndex] ?? "";
+    const row = rows[rowIndex];
+    const isInsertRow = insertRowStart !== undefined && rowIndex >= insertRowStart;
+    const trueRowIdx = rowIndexMap ? rowIndexMap[rowIndex] : rowIndex;
+    const isDeleted = !!deletedRows?.has(trueRowIdx);
+    const isFK = fkColIndices.has(colIndex);
+    const canEditCell = !!isEditing || (isInsertRow && !!editable);
+
+    const items: ContextMenuEntry[] = [
+      {
+        label: "Copy Cell Value",
+        icon: <Copy className="h-3 w-3" />,
+        onClick: () => void navigator.clipboard.writeText(cellText(cellValue)),
+      },
+    ];
+
+    if (row) {
+      items.push(
+        {
+          label: "Copy Row",
+          icon: <Rows3 className="h-3 w-3" />,
+          onClick: () =>
+            void navigator.clipboard.writeText(row.map((c) => csvEscape(cellText(c))).join(",")),
+        },
+        {
+          label: "Copy Row as CSV",
+          icon: <Copy className="h-3 w-3" />,
+          onClick: () => void copyToClipboard("csv", columns, [row]),
+        },
+        {
+          label: "Copy Row as JSON",
+          icon: <Copy className="h-3 w-3" />,
+          onClick: () => void copyToClipboard("json", columns, [row]),
+        },
+      );
+    }
+
+    if (isFK && (onFKPickerOpen || onFKNavigate)) {
+      items.push({ separator: true });
+      if (onFKPickerOpen && canEditCell && !isDeleted) {
+        items.push({
+          label: "Edit",
+          icon: <Pencil className="h-3 w-3" />,
+          onClick: () => onFKPickerOpen(trueRowIdx, colIndex),
+        });
+      }
+      if (onFKNavigate && cellValue !== "") {
+        items.push({
+          label: "Open relation",
+          icon: <ExternalLink className="h-3 w-3" />,
+          onClick: () => onFKNavigate(colName, cellValue),
+        });
+      }
+    }
+
+    if (onRefresh || onAddRow || onPasteRows || onDuplicateRow || onImport) {
+      items.push({ separator: true });
+      if (onRefresh) {
+        items.push({
+          label: "Refresh",
+          icon: <RefreshCw className="h-3 w-3" />,
+          onClick: onRefresh,
+        });
+      }
+      if (onAddRow) {
+        items.push({ label: "Add Row", icon: <Plus className="h-3 w-3" />, onClick: onAddRow });
+      }
+      if (onDuplicateRow && row && !isInsertRow) {
+        items.push({
+          label: "Duplicate Row",
+          icon: <Copy className="h-3 w-3" />,
+          onClick: () => onDuplicateRow(rowIndex),
+        });
+      }
+      if (onPasteRows) {
+        items.push({
+          label: "Paste",
+          icon: <ClipboardPaste className="h-3 w-3" />,
+          onClick: () => void handlePaste(),
+        });
+      }
+      if (onImport) {
+        items.push({
+          label: "Import CSV",
+          icon: <FileUp className="h-3 w-3" />,
+          onClick: onImport,
+        });
+      }
+    }
+
+    if (rows.length > 0) {
+      items.push(
+        { separator: true },
+        {
+          label: "Export CSV",
+          icon: <Download className="h-3 w-3" />,
+          onClick: () => void exportResults("csv", columns, rows),
+        },
+      );
+    }
+
+    return items;
+  }, [
+    cellMenu,
+    columns,
+    rows,
+    rowIndexMap,
+    deletedRows,
+    fkColIndices,
+    isEditing,
+    editable,
+    insertRowStart,
+    onFKPickerOpen,
+    onFKNavigate,
+    onRefresh,
+    onAddRow,
+    onDuplicateRow,
+    onPasteRows,
+    onImport,
+    handlePaste,
+  ]);
 
   const gridTheme = useMemo((): Partial<Theme> => buildGridTheme(theme), [theme]);
 
@@ -403,14 +593,20 @@ export function ResultsGrid({
 
   // A click anywhere in a row selects the whole row (not just the clicked cell),
   // so a single click is enough to target a row for keyboard delete.
-  const handleSelectionChange = useCallback((newSel: GridSelection) => {
-    if (!newSel.current) {
-      setSelection(newSel);
-      return;
-    }
-    const rowIdx = newSel.current.cell[1];
-    setSelection({ ...newSel, rows: CompactSelection.fromSingleSelection(rowIdx) });
-  }, []);
+  const handleSelectionChange = useCallback(
+    (newSel: GridSelection) => {
+      if (!newSel.current) {
+        setSelection(newSel);
+        return;
+      }
+      const rowIdx = newSel.current.cell[1];
+      setSelection({ ...newSel, rows: CompactSelection.fromSingleSelection(rowIdx) });
+      // Feeds the row detail side panel — it always shows whatever row was last
+      // clicked/navigated to in the grid, independent of any range selection.
+      useUIStore.getState().setSelectedRow(rowIndexMap ? rowIndexMap[rowIdx] : rowIdx);
+    },
+    [rowIndexMap],
+  );
 
   // Delete/Backspace on selected rows stages them for deletion (pressing again restores them);
   // Ctrl/Cmd+Z undoes the last edit or delete/restore. Both are skipped while a cell's value
@@ -498,6 +694,7 @@ export function ResultsGrid({
         onCellContextMenu={handleCellContextMenu}
         onKeyDown={handleGridKeyDown}
         onVisibleRegionChanged={handleVisibleRegionChanged}
+        onColumnResize={handleColumnResize}
         customRenderers={[typedEditCellRenderer, fkCellRenderer]}
         theme={gridTheme}
         width={containerSize.width}
@@ -505,7 +702,7 @@ export function ResultsGrid({
         smoothScrollX
         smoothScrollY={!virtualQuery}
         experimental={{ renderStrategy: "direct" }}
-        rowMarkers="none"
+        rowMarkers="number"
         gridSelection={selection}
         onGridSelectionChange={handleSelectionChange}
         getCellsForSelection={true}
@@ -515,60 +712,9 @@ export function ResultsGrid({
         rowHeight={GRID_ROW_HEIGHT}
         headerHeight={34}
       />
-      {fkMenu &&
-        createPortal(
-          <>
-            <div
-              className="fixed inset-0"
-              style={{ zIndex: 9998 }}
-              onClick={closeFkMenu}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                closeFkMenu();
-              }}
-            />
-            <div
-              className="fixed min-w-[160px] rounded-md border border-border bg-popover shadow-md py-1"
-              style={{ zIndex: 9999, top: fkMenu.y, left: fkMenu.x }}
-            >
-              {fkMenuCanEdit && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onFKPickerOpen?.(
-                      rowIndexMap ? rowIndexMap[fkMenu.rowIndex] : fkMenu.rowIndex,
-                      fkMenu.colIndex,
-                    );
-                    closeFkMenu();
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs font-mono hover:bg-accent transition-colors"
-                >
-                  <Pencil className="h-3 w-3 text-muted-foreground" />
-                  Edit
-                </button>
-              )}
-              {fkMenuCanOpen && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onFKNavigate?.(fkMenu.colName, fkMenu.value);
-                    closeFkMenu();
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-xs font-mono hover:bg-accent transition-colors"
-                >
-                  <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                  Open relation
-                </button>
-              )}
-              {!fkMenuCanEdit && !fkMenuCanOpen && (
-                <div className="px-3 py-1.5 text-xs font-mono text-muted-foreground">
-                  No actions available
-                </div>
-              )}
-            </div>
-          </>,
-          document.body,
-        )}
+      {cellMenu && (
+        <ContextMenu x={cellMenu.x} y={cellMenu.y} items={cellMenuItems} onClose={closeCellMenu} />
+      )}
     </div>
   );
 }

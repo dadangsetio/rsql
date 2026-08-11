@@ -26,10 +26,15 @@ self.MonacoEnvironment = {
 loader.config({ monaco });
 
 setupLanguageFeatures(LanguageIdEnum.PG, {
-  // Completion is registered directly in registerCompletion below; the library
-  // still provides diagnostics and navigation through its worker.
+  // Completion is registered directly in registerCompletion below (see c689a03
+  // for why: the library resolves its worker through its own monaco-editor
+  // import, separate from the app's, so anything routed through it can't
+  // reach our models). Diagnostics hits the same worker path and never
+  // resolves either — it only spammed "doValidation" errors with no actual
+  // squiggles to show for it, so it stays off until it's worth an inline
+  // implementation like completion got.
   completionItems: false,
-  diagnostics: true,
+  diagnostics: false,
   definitions: true,
   references: true,
 });

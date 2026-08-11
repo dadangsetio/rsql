@@ -10,6 +10,10 @@ pub(crate) fn process_simple_messages(
 ) -> (Vec<String>, Vec<Vec<Cell>>) {
     let mut cur_columns: Vec<String> = Vec::new();
     let mut cur_rows: Vec<Vec<Cell>> = Vec::new();
+    // A SELECT-shaped statement sends RowDescription before any Row messages, even
+    // when it matches zero rows — track it separately so an empty result set still
+    // keeps its column layout instead of falling back to a synthetic "N rows affected".
+    let mut cur_has_columns = false;
     let mut last_columns: Vec<String> = Vec::new();
     let mut last_rows: Vec<Vec<Cell>> = Vec::new();
     let mut has_row_result = false;
@@ -17,6 +21,10 @@ pub(crate) fn process_simple_messages(
 
     for msg in messages {
         match msg {
+            SimpleQueryMessage::RowDescription(cols) => {
+                cur_columns = cols.iter().map(|c| c.name().to_owned()).collect();
+                cur_has_columns = true;
+            }
             SimpleQueryMessage::Row(row) => {
                 if cur_columns.is_empty() {
                     cur_columns = column_names(&row);
@@ -24,7 +32,7 @@ pub(crate) fn process_simple_messages(
                 cur_rows.push(row_cells(&row));
             }
             SimpleQueryMessage::CommandComplete(n) => {
-                if !cur_rows.is_empty() {
+                if cur_has_columns || !cur_rows.is_empty() {
                     last_columns = std::mem::take(&mut cur_columns);
                     last_rows = std::mem::take(&mut cur_rows);
                     has_row_result = true;
@@ -32,6 +40,7 @@ pub(crate) fn process_simple_messages(
                     cur_columns.clear();
                     cur_rows.clear();
                 }
+                cur_has_columns = false;
                 total_affected += n;
             }
             _ => {}
