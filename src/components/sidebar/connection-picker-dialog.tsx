@@ -1,16 +1,18 @@
+import { Copy, Edit3, Plus, Search, Server, Trash2 } from "lucide-react";
 import React from "react";
+import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
-import { cn } from "@/lib/utils";
 import { groupProjectsByServer } from "@/lib/server-groups";
-import { useUIStore } from "@/stores/ui-store";
+import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
+import { useUIStore } from "@/stores/ui-store";
 import { ProjectConnectionStatus } from "@/types";
-import { Copy, Edit3, Plus, Search, Server, Trash2 } from "lucide-react";
 
 export function ConnectionPickerDialog({
-  open, onOpenChange, onEditConnection,
+  open,
+  onOpenChange,
+  onEditConnection,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -27,7 +29,9 @@ export function ConnectionPickerDialog({
   const copy = (text: string) => navigator.clipboard.writeText(text);
 
   const [query, setQuery] = React.useState("");
-  React.useEffect(() => { if (open) setQuery(""); }, [open]);
+  React.useEffect(() => {
+    if (open) setQuery("");
+  }, [open]);
 
   const groups = groupProjectsByServer(projects);
   const rows = Array.from(groups.entries())
@@ -69,7 +73,10 @@ export function ConnectionPickerDialog({
 
         <div className="max-h-72 overflow-y-auto space-y-0.5">
           <button
-            onClick={() => { setConnectionModalOpen(true); onOpenChange(false); }}
+            onClick={() => {
+              setConnectionModalOpen(true);
+              onOpenChange(false);
+            }}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-primary hover:bg-primary/10 transition-colors"
           >
             <Plus className="h-4 w-4" /> New Connection
@@ -77,36 +84,74 @@ export function ConnectionPickerDialog({
 
           {rows.map(({ fp, pids, name, address }) => {
             const anyConnected = pids.some((p) => status[p] === ProjectConnectionStatus.Connected);
-            const anyConnecting = pids.some((p) => status[p] === ProjectConnectionStatus.Connecting);
+            const anyConnecting = pids.some(
+              (p) => status[p] === ProjectConnectionStatus.Connecting,
+            );
             return (
               <div
                 key={fp}
                 role="button"
                 tabIndex={0}
                 onClick={() => selectServer(fp, pids)}
-                onKeyDown={(e) => { if (e.key === "Enter") selectServer(fp, pids); }}
-                onContextMenu={(e) => showMenu(e, [
-                  ...(onEditConnection ? [{ label: "Edit Connection", icon: <Edit3 className="h-3 w-3" />, onClick: () => onEditConnection(pids[0]) }] : []),
-                  { separator: true as const },
-                  { label: "Copy Name", icon: <Copy className="h-3 w-3" />, onClick: () => copy(name) },
-                  { separator: true as const },
-                  { label: "Delete", icon: <Trash2 className="h-3 w-3" />, onClick: () => { for (const pid of pids) { closeDatabaseTab(pid); void deleteProject(pid); } }, destructive: true },
-                ])}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") selectServer(fp, pids);
+                }}
+                onContextMenu={(e) =>
+                  showMenu(e, [
+                    ...(onEditConnection
+                      ? [
+                          {
+                            label: "Edit Connection",
+                            icon: <Edit3 className="h-3 w-3" />,
+                            onClick: () => onEditConnection(pids[0]),
+                          },
+                        ]
+                      : []),
+                    { separator: true as const },
+                    {
+                      label: "Copy Name",
+                      icon: <Copy className="h-3 w-3" />,
+                      onClick: () => copy(name),
+                    },
+                    { separator: true as const },
+                    {
+                      label: "Delete",
+                      icon: <Trash2 className="h-3 w-3" />,
+                      onClick: () => {
+                        for (const pid of pids) {
+                          closeDatabaseTab(pid);
+                          void deleteProject(pid);
+                        }
+                      },
+                      destructive: true,
+                    },
+                  ])
+                }
                 className="group flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent/60 transition-colors cursor-pointer"
               >
                 <Server className="h-3.5 w-3.5 text-primary shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="font-mono text-sm truncate">{name}</div>
-                  {address && <div className="font-mono text-[10px] text-muted-foreground truncate">{address}</div>}
+                  {address && (
+                    <div className="font-mono text-[10px] text-muted-foreground truncate">
+                      {address}
+                    </div>
+                  )}
                 </div>
-                <span className={cn("h-2 w-2 rounded-full shrink-0",
-                  anyConnected && "bg-success shadow-[0_0_6px_currentColor]",
-                  anyConnecting && "bg-warning shadow-[0_0_6px_currentColor]",
-                  !anyConnected && !anyConnecting && "bg-muted",
-                )} />
+                <span
+                  className={cn(
+                    "h-2 w-2 rounded-full shrink-0",
+                    anyConnected && "bg-success shadow-[0_0_6px_currentColor]",
+                    anyConnecting && "bg-warning shadow-[0_0_6px_currentColor]",
+                    !anyConnected && !anyConnecting && "bg-muted",
+                  )}
+                />
                 {onEditConnection && (
                   <button
-                    onClick={(e) => { e.stopPropagation(); onEditConnection(pids[0]); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditConnection(pids[0]);
+                    }}
                     title="Edit Connection"
                     className="shrink-0 rounded-sm p-1 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground hover:bg-accent transition-opacity"
                   >

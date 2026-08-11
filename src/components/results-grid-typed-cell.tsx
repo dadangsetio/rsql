@@ -1,13 +1,18 @@
-import { useState } from "react";
 import {
-  GridCellKind,
-  drawTextCell,
   type CustomCell,
   type CustomRenderer,
+  drawTextCell,
+  GridCellKind,
   type ProvideEditorComponent,
   type Theme,
 } from "@glideapps/glide-data-grid";
-import { toDateTimeInputValue, nowValueFor, type ColumnEditKind, type DateTimeEditKind } from "@/lib/column-edit-kind";
+import { useState } from "react";
+import {
+  type ColumnEditKind,
+  type DateTimeEditKind,
+  nowValueFor,
+  toDateTimeInputValue,
+} from "@/lib/column-edit-kind";
 
 export interface TypedEditCellData {
   readonly kind: "typed-edit";
@@ -51,12 +56,19 @@ const TypedEditEditor: ProvideEditorComponent<TypedEditCell> = (p) => {
         autoFocus
         className="typed-edit-select"
         value={local === "" ? "null" : local}
-        onChange={(e) => { setLocal(e.target.value); commit(e.target.value); }}
-        onKeyDown={(e) => { if (e.key === "Escape") p.onFinishedEditing(undefined); }}
+        onChange={(e) => {
+          setLocal(e.target.value);
+          commit(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") p.onFinishedEditing(undefined);
+        }}
       >
         <option value="null">NULL</option>
         {(data.options ?? []).map((opt) => (
-          <option key={opt} value={opt}>{opt}</option>
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
         ))}
       </select>
     );
@@ -74,14 +86,21 @@ const TypedEditEditor: ProvideEditorComponent<TypedEditCell> = (p) => {
         onChange={(e) => setLocal(e.target.value)}
         onBlur={() => commit(local)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") { e.preventDefault(); commit(local); }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(local);
+          }
           if (e.key === "Escape") p.onFinishedEditing(undefined);
         }}
       />
       <button
         type="button"
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => { const now = nowValueFor(editKind); setLocal(now); commit(now); }}
+        onClick={() => {
+          const now = nowValueFor(editKind);
+          setLocal(now);
+          commit(now);
+        }}
       >
         Now
       </button>
@@ -132,7 +151,11 @@ export const fkCellRenderer: CustomRenderer<FKCell> = {
       return;
     }
     // Leave room on the right for the arrow glyph so it never overlaps the value text.
-    drawTextCell({ ...args, rect: { ...rect, width: rect.width - FK_ARROW_ZONE_WIDTH } }, value, "left");
+    drawTextCell(
+      { ...args, rect: { ...rect, width: rect.width - FK_ARROW_ZONE_WIDTH } },
+      value,
+      "left",
+    );
     ctx.save();
     ctx.font = `${theme.baseFontStyle} ${theme.fontFamily}`;
     ctx.fillStyle = theme.accentColor;

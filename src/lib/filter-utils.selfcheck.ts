@@ -1,15 +1,17 @@
 // Ad hoc self-check for filter-utils.ts. No framework — run with:
 //   npx tsx src/lib/filter-utils.selfcheck.ts
 import assert from "node:assert";
+import type { ColumnFilterCondition, FilterState } from "@/types";
 import {
-  classifyFilterColumnKind,
-  conditionToSql,
   buildFilteredSql,
   buildSortedSql,
+  classifyFilterColumnKind,
+  conditionToSql,
 } from "./filter-utils";
-import type { ColumnFilterCondition, FilterState } from "@/types";
 
-const col = (partial: Partial<ColumnFilterCondition> & Pick<ColumnFilterCondition, "column" | "operator">): ColumnFilterCondition => ({
+const col = (
+  partial: Partial<ColumnFilterCondition> & Pick<ColumnFilterCondition, "column" | "operator">,
+): ColumnFilterCondition => ({
   id: "c",
   type: "column",
   join: "and",
@@ -48,7 +50,10 @@ assert.strictEqual(
 );
 
 // Raw-only condition
-const rawState: FilterState = { open: true, conditions: [{ id: "r", type: "raw", join: "and", sql: "age > 18" }] };
+const rawState: FilterState = {
+  open: true,
+  conditions: [{ id: "r", type: "raw", join: "and", sql: "age > 18" }],
+};
 assert.strictEqual(
   buildFilteredSql("SELECT * FROM users", rawState),
   `SELECT * FROM (SELECT * FROM users) AS rsql_filtered WHERE (age > 18)`,
@@ -69,7 +74,10 @@ assert.strictEqual(
 // No active filter -> null (empty conditions list, and a raw condition with blank text)
 const empty: FilterState = { open: true, conditions: [] };
 assert.strictEqual(buildFilteredSql("SELECT * FROM users", empty), null);
-const blankRaw: FilterState = { open: true, conditions: [{ id: "r", type: "raw", join: "and", sql: "   " }] };
+const blankRaw: FilterState = {
+  open: true,
+  conditions: [{ id: "r", type: "raw", join: "and", sql: "   " }],
+};
 assert.strictEqual(buildFilteredSql("SELECT * FROM users", blankRaw), null);
 
 // classifyFilterColumnKind buckets integers as "numeric" (unlike column-edit-kind.ts's "text")

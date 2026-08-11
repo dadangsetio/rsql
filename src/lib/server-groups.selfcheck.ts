@@ -1,12 +1,22 @@
 // Ad hoc self-check for server-groups.ts. No framework — run with:
 //   npx tsx src/lib/server-groups.selfcheck.ts
 import assert from "node:assert";
-import { serverFingerprint, groupProjectsByServer, serverLabel } from "./server-groups";
-import type { ProjectMap, ProjectDetails } from "@/types";
+import type { ProjectDetails, ProjectMap } from "@/types";
+import { groupProjectsByServer, serverFingerprint, serverLabel } from "./server-groups";
 
 const base: Omit<ProjectDetails, "database"> = {
-  driver: "PGSQL", username: "postgres", password: "", host: "localhost", port: "5432",
-  ssl: "false", sshEnabled: "false", sshHost: "", sshPort: "22", sshUser: "", sshPassword: "", sshKeyPath: "",
+  driver: "PGSQL",
+  username: "postgres",
+  password: "",
+  host: "localhost",
+  port: "5432",
+  ssl: "false",
+  sshEnabled: "false",
+  sshHost: "",
+  sshPort: "22",
+  sshUser: "",
+  sshPassword: "",
+  sshKeyPath: "",
 };
 
 const projects: ProjectMap = {
@@ -26,7 +36,10 @@ const localFp = serverFingerprint(projects.db1);
 assert.deepStrictEqual(new Set(groups.get(localFp)), new Set(["db1", "db2"]));
 
 // Single-project server: label is the project id
-assert.strictEqual(serverLabel(serverFingerprint(projects.other_host), ["other_host"], projects), "other_host");
+assert.strictEqual(
+  serverLabel(serverFingerprint(projects.other_host), ["other_host"], projects),
+  "other_host",
+);
 // Multi-project server: label is host:port
 assert.strictEqual(serverLabel(localFp, ["db1", "db2"], projects), "localhost:5432");
 

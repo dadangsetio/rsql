@@ -1,9 +1,18 @@
-import React from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import type React from "react";
 import { cn } from "@/lib/utils";
 
 // Indent levels (px)
-export const I = { server: 4, cat: 14, db: 24, schema: 32, schemaObj: 40, table: 48, section: 56, item: 64 };
+export const I = {
+  server: 4,
+  cat: 14,
+  db: 24,
+  schema: 32,
+  schemaObj: 40,
+  table: 48,
+  section: 56,
+  item: 64,
+};
 
 /** Indent guide lines */
 export function IndentGuides({ indent }: { indent: number }) {
@@ -23,8 +32,18 @@ export function IndentGuides({ indent }: { indent: number }) {
 
 /** Generic tree row */
 export function TreeRow({
-  indent, icon, label, bold, expanded, loading: isLoading, trailing, selected,
-  onClick, onDoubleClick, onContextMenu, onChevronClick,
+  indent,
+  icon,
+  label,
+  bold,
+  expanded,
+  loading: isLoading,
+  trailing,
+  selected,
+  onClick,
+  onDoubleClick,
+  onContextMenu,
+  onChevronClick,
 }: {
   indent: number;
   icon: React.ReactNode;
@@ -55,17 +74,28 @@ export function TreeRow({
     >
       <IndentGuides indent={indent} />
       {expanded !== undefined ? (
-        isLoading ? <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
-          : onChevronClick ? (
-            <span
-              role="button"
-              onClick={(e) => { e.stopPropagation(); onChevronClick(); }}
-              className="shrink-0 -m-1 p-1 rounded-sm hover:bg-black/[0.08] dark:hover:bg-white/[0.12]"
-            >
-              {expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
-            </span>
-          ) : expanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-            : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+        isLoading ? (
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+        ) : onChevronClick ? (
+          <span
+            role="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onChevronClick();
+            }}
+            className="shrink-0 -m-1 p-1 rounded-sm hover:bg-black/[0.08] dark:hover:bg-white/[0.12]"
+          >
+            {expanded ? (
+              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+            )}
+          </span>
+        ) : expanded ? (
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+        )
       ) : null}
       <span className="shrink-0">{icon}</span>
       <span className={cn("font-mono text-xs", bold && "font-semibold")}>{label}</span>
@@ -76,7 +106,11 @@ export function TreeRow({
 
 /** Collapsible section header */
 export function SectionHeader({
-  indent, label, icon, expanded, onClick,
+  indent,
+  label,
+  icon,
+  expanded,
+  onClick,
 }: {
   indent: number;
   label: string;
@@ -86,11 +120,17 @@ export function SectionHeader({
   onClick: () => void;
 }) {
   return (
-    <button onClick={onClick}
+    <button
+      onClick={onClick}
       className="relative flex w-full items-center gap-1.5 py-0.5 text-left hover:bg-sidebar-accent transition-colors rounded-sm whitespace-nowrap"
-      style={{ paddingLeft: `${indent}px` }}>
+      style={{ paddingLeft: `${indent}px` }}
+    >
       <IndentGuides indent={indent} />
-      {expanded ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />}
+      {expanded ? (
+        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+      ) : (
+        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+      )}
       <span className="shrink-0">{icon}</span>
       <span className="font-mono text-[11px] font-semibold text-muted-foreground">{label}</span>
     </button>

@@ -1,14 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { save, open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { open as openFileDialog, save } from "@tauri-apps/plugin-dialog";
+import { AlertCircle, Check, FolderOpen, Loader2, Save, Upload } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { pgsqlBackup, pgsqlRestore } from "@/tauri";
-import { useActivityStore } from "@/stores/activity-store";
-import { FolderOpen, Save, Upload, Loader2, Check, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useActivityStore } from "@/stores/activity-store";
+import { pgsqlBackup, pgsqlRestore } from "@/tauri";
+import { Button } from "./ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Input } from "./ui/input";
 
 interface FlagOption {
   value: string;
@@ -35,7 +35,13 @@ const RESTORE_FLAGS: FlagOption[] = [
   { value: "--single-transaction", label: "Single transaction" },
   { value: "--verbose", label: "Verbose" },
 ];
-const RESTORE_DEFAULT_FLAGS = ["--clean", "--if-exists", "--no-owner", "--single-transaction", "--verbose"];
+const RESTORE_DEFAULT_FLAGS = [
+  "--clean",
+  "--if-exists",
+  "--no-owner",
+  "--single-transaction",
+  "--verbose",
+];
 
 // pg_dump/pg_restore reject these combinations outright — grey them out instead of
 // letting the process fail after the file dialog + run.
@@ -58,7 +64,13 @@ interface PgBackupModalProps {
   dbName: string;
 }
 
-export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbName }: PgBackupModalProps) {
+export function PgBackupModal({
+  open: isOpen,
+  onOpenChange,
+  mode,
+  projectId,
+  dbName,
+}: PgBackupModalProps) {
   const flagOptions = mode === "backup" ? BACKUP_FLAGS : RESTORE_FLAGS;
   const defaultFlags = mode === "backup" ? BACKUP_DEFAULT_FLAGS : RESTORE_DEFAULT_FLAGS;
   const [format, setFormat] = useState<string>(mode === "backup" ? "custom" : "archive");
@@ -126,23 +138,37 @@ export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbN
 
     try {
       if (mode === "backup") {
-        await pgsqlBackup(projectId, filePath, { format: format as "custom" | "plain" | "tar", extra_args: args }, jobId);
+        await pgsqlBackup(
+          projectId,
+          filePath,
+          { format: format as "custom" | "plain" | "tar", extra_args: args },
+          jobId,
+        );
       } else {
-        await pgsqlRestore(projectId, filePath, { source_format: format as "archive" | "plain", extra_args: args }, jobId);
+        await pgsqlRestore(
+          projectId,
+          filePath,
+          { source_format: format as "archive" | "plain", extra_args: args },
+          jobId,
+        );
       }
       const message = mode === "backup" ? "Backup completed" : "Restore completed";
       setDone({ ok: true, message });
       toast.success(`${dbName}: ${message.toLowerCase()}`);
-      useActivityStore.getState().log("success", `${dbName}: ${message.toLowerCase()}`, lines.join("\n") || undefined);
+      useActivityStore
+        .getState()
+        .log("success", `${dbName}: ${message.toLowerCase()}`, lines.join("\n") || undefined);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setDone({ ok: false, message });
       toast.error(`${mode === "backup" ? "Backup" : "Restore"} failed: ${message}`);
-      useActivityStore.getState().log(
-        "error",
-        `${dbName}: ${mode === "backup" ? "backup" : "restore"} failed`,
-        [message, lines.join("\n")].filter(Boolean).join("\n\n"),
-      );
+      useActivityStore
+        .getState()
+        .log(
+          "error",
+          `${dbName}: ${mode === "backup" ? "backup" : "restore"} failed`,
+          [message, lines.join("\n")].filter(Boolean).join("\n\n"),
+        );
     } finally {
       setRunning(false);
       unlisten();
@@ -150,11 +176,20 @@ export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbN
   }, [filePath, mode, format, extraArgs, projectId, dbName]);
 
   return (
-    <Dialog open={isOpen} onOpenChange={(v) => { if (!running) onOpenChange(v); }}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(v) => {
+        if (!running) onOpenChange(v);
+      }}
+    >
       <DialogContent className="sm:max-w-[560px] p-0 gap-0">
         <DialogHeader className="px-5 pt-5 pb-3">
           <DialogTitle className="flex items-center gap-2">
-            {mode === "backup" ? <Save className="h-4 w-4 text-primary" /> : <Upload className="h-4 w-4 text-primary" />}
+            {mode === "backup" ? (
+              <Save className="h-4 w-4 text-primary" />
+            ) : (
+              <Upload className="h-4 w-4 text-primary" />
+            )}
             {mode === "backup" ? "Backup" : "Restore"} <span className="font-mono">{dbName}</span>
           </DialogTitle>
           <DialogDescription>
@@ -165,9 +200,18 @@ export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbN
         </DialogHeader>
 
         <div className="px-5 pb-5 space-y-4">
-          <Button variant="outline" onClick={pickPath} disabled={running} className="w-full justify-center gap-2 font-mono text-xs">
+          <Button
+            variant="outline"
+            onClick={pickPath}
+            disabled={running}
+            className="w-full justify-center gap-2 font-mono text-xs"
+          >
             <FolderOpen className="h-3.5 w-3.5" />
-            {filePath ? filePath.split("/").pop() : mode === "backup" ? "Choose destination file..." : "Choose dump file..."}
+            {filePath
+              ? filePath.split("/").pop()
+              : mode === "backup"
+                ? "Choose destination file..."
+                : "Choose dump file..."}
           </Button>
 
           <div className="space-y-1.5">
@@ -196,17 +240,27 @@ export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbN
           </div>
 
           <div className="space-y-1.5">
-            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Options</div>
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Options
+            </div>
             <select
               value=""
-              onChange={(e) => { addFlag(e.target.value); e.target.value = ""; }}
+              onChange={(e) => {
+                addFlag(e.target.value);
+                e.target.value = "";
+              }}
               disabled={running}
               className="w-full bg-input/80 border border-border/50 rounded-lg px-2 py-1.5 text-xs font-mono text-foreground"
             >
               <option value="">+ Add option...</option>
               {flagOptions.map((f) => (
-                <option key={f.value} value={f.value} disabled={isFlagDisabled(f.value, currentTokens)}>
-                  {f.label}{currentTokens.includes(f.value) ? " (added)" : ""}
+                <option
+                  key={f.value}
+                  value={f.value}
+                  disabled={isFlagDisabled(f.value, currentTokens)}
+                >
+                  {f.label}
+                  {currentTokens.includes(f.value) ? " (added)" : ""}
                 </option>
               ))}
             </select>
@@ -230,12 +284,20 @@ export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbN
 
           {(running || log.length > 0) && (
             <div className="space-y-1.5">
-              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Log</div>
+              <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Log
+              </div>
               <div className="rounded-xl border border-border/40 bg-muted/20 max-h-[160px] overflow-y-auto p-2 font-mono text-[11px] text-muted-foreground space-y-0.5">
                 {log.length === 0 ? (
-                  <div className="opacity-60 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Starting...</div>
+                  <div className="opacity-60 flex items-center gap-1.5">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Starting...
+                  </div>
                 ) : (
-                  log.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line}</div>)
+                  log.map((line, i) => (
+                    <div key={i} className="whitespace-pre-wrap break-all">
+                      {line}
+                    </div>
+                  ))
                 )}
                 <div ref={logEndRef} />
               </div>
@@ -243,21 +305,37 @@ export function PgBackupModal({ open: isOpen, onOpenChange, mode, projectId, dbN
           )}
 
           {done && (
-            <div className={cn(
-              "flex items-center gap-2 text-xs font-mono px-3 py-2 rounded-lg",
-              done.ok ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive",
-            )}>
-              {done.ok ? <Check className="h-3.5 w-3.5 shrink-0" /> : <AlertCircle className="h-3.5 w-3.5 shrink-0" />}
+            <div
+              className={cn(
+                "flex items-center gap-2 text-xs font-mono px-3 py-2 rounded-lg",
+                done.ok ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive",
+              )}
+            >
+              {done.ok ? (
+                <Check className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+              )}
               <span className="truncate">{done.message}</span>
             </div>
           )}
 
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={running} className="font-mono text-xs">
+            <Button
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              disabled={running}
+              className="font-mono text-xs"
+            >
               {done?.ok ? "Close" : "Cancel"}
             </Button>
             {!done?.ok && (
-              <Button variant="gradient" onClick={handleRun} disabled={running || !filePath} className="font-mono text-xs gap-2">
+              <Button
+                variant="gradient"
+                onClick={handleRun}
+                disabled={running || !filePath}
+                className="font-mono text-xs gap-2"
+              >
                 {running && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {mode === "backup" ? "Start Backup" : "Start Restore"}
               </Button>

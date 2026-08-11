@@ -1,14 +1,26 @@
-import React from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-import { groupProjectsByServer } from "@/lib/server-groups";
-import { useUIStore } from "@/stores/ui-store";
-import { useProjectStore } from "@/stores/project-store";
-import { ProjectConnectionStatus } from "@/types";
 import { Database, Loader2, Plus, Search } from "lucide-react";
+import React from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { groupProjectsByServer } from "@/lib/server-groups";
+import { cn } from "@/lib/utils";
+import { useProjectStore } from "@/stores/project-store";
+import { useUIStore } from "@/stores/ui-store";
+import { ProjectConnectionStatus } from "@/types";
 
-export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function DatabasePickerDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const activeServerFp = useUIStore((s) => s.activeServerFp);
   const openDatabaseTab = useUIStore((s) => s.openDatabaseTab);
   const projects = useProjectStore((s) => s.projects);
@@ -18,7 +30,9 @@ export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; on
 
   const [query, setQuery] = React.useState("");
   const inputRef = React.useRef<HTMLInputElement>(null);
-  React.useEffect(() => { if (open) setQuery(""); }, [open]);
+  React.useEffect(() => {
+    if (open) setQuery("");
+  }, [open]);
 
   if (!activeServerFp) {
     return (
@@ -54,8 +68,10 @@ export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; on
 
   const openExisting = (dbName: string) => {
     const dbPid = dbToProject.get(dbName);
-    if (dbPid) { openDatabaseTab(dbPid); onOpenChange(false); }
-    else {
+    if (dbPid) {
+      openDatabaseTab(dbPid);
+      onOpenChange(false);
+    } else {
       void addDatabaseToServer(pids[0], dbName, dbName).then(() => {
         openDatabaseTab(dbName);
         onOpenChange(false);
@@ -78,7 +94,10 @@ export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; on
         <DialogHeader>
           <DialogTitle className="font-mono text-sm">Databases</DialogTitle>
           <DialogDescription>
-            On <span className="font-mono font-semibold text-foreground">{source?.host}:{source?.port}</span>
+            On{" "}
+            <span className="font-mono font-semibold text-foreground">
+              {source?.host}:{source?.port}
+            </span>
           </DialogDescription>
         </DialogHeader>
 
@@ -89,7 +108,9 @@ export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; on
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && query.trim() && !exactMatch) addNew(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && query.trim() && !exactMatch) addNew();
+            }}
             placeholder="Search or type a new database name..."
             className="h-8 pl-8 text-xs font-mono"
           />
@@ -97,7 +118,10 @@ export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; on
 
         <div className="max-h-72 overflow-y-auto space-y-0.5">
           <button
-            onClick={() => { if (query.trim() && !exactMatch) addNew(); else inputRef.current?.focus(); }}
+            onClick={() => {
+              if (query.trim() && !exactMatch) addNew();
+              else inputRef.current?.focus();
+            }}
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-primary hover:bg-primary/10 transition-colors"
           >
             <Plus className="h-3.5 w-3.5 shrink-0" />
@@ -115,14 +139,21 @@ export function DatabasePickerDialog({ open, onOpenChange }: { open: boolean; on
                 onClick={() => openExisting(dbName)}
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-accent/60 transition-colors"
               >
-                {isConnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" /> : <Database className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                {isConnecting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
+                ) : (
+                  <Database className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                )}
                 <span className="font-mono flex-1 truncate">{dbName}</span>
                 {dbPid && (
-                  <span className={cn("h-2 w-2 rounded-full shrink-0",
-                    isConnected && "bg-success shadow-[0_0_6px_currentColor]",
-                    isConnecting && "bg-warning shadow-[0_0_6px_currentColor]",
-                    !isConnected && !isConnecting && "bg-muted",
-                  )} />
+                  <span
+                    className={cn(
+                      "h-2 w-2 rounded-full shrink-0",
+                      isConnected && "bg-success shadow-[0_0_6px_currentColor]",
+                      isConnecting && "bg-warning shadow-[0_0_6px_currentColor]",
+                      !isConnected && !isConnecting && "bg-muted",
+                    )}
+                  />
                 )}
               </button>
             );

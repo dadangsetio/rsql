@@ -1,28 +1,38 @@
-import { useState, useEffect, useCallback } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
-import { ResultsGrid } from "./results-grid";
-import { FilterBar } from "./filter-bar";
-import { useProjectStore } from "@/stores/project-store";
-import { DriverFactory } from "@/lib/database-driver";
-import { quoteIdent } from "@/lib/sql-utils";
+import { ArrowRight, ChevronLeft, ChevronRight, Loader2, XCircle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { buildEnumLabelMap } from "@/lib/column-edit-kind";
+import { DriverFactory } from "@/lib/database-driver";
 import {
-  classifyFilterColumnKind,
   buildConditionsSql,
+  classifyFilterColumnKind,
   emptyFilterState,
-  newColumnCondition,
   type FilterColumnInfo,
+  newColumnCondition,
 } from "@/lib/filter-utils";
-import { Loader2, ArrowRight, XCircle, ChevronLeft, ChevronRight } from "lucide-react";
+import { quoteIdent } from "@/lib/sql-utils";
 import type { CellValue } from "@/lib/wire";
+import { useProjectStore } from "@/stores/project-store";
 import type { ColumnDetail, FilterState } from "@/types";
+import { FilterBar } from "./filter-bar";
+import { ResultsGrid } from "./results-grid";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 
-const LABEL_COLUMN_CANDIDATES = ["name", "title", "label", "email", "username", "display_name", "full_name"];
+const LABEL_COLUMN_CANDIDATES = [
+  "name",
+  "title",
+  "label",
+  "email",
+  "username",
+  "display_name",
+  "full_name",
+];
 const TEXTY_TYPES = new Set(["character varying", "character", "text", "citext"]);
 
 /** Best-effort guess at a human-readable column to filter by alongside the target column's raw id. */
 function pickDisplayColumn(colDetails: ColumnDetail[], targetColumn: string): string | null {
-  const textCols = colDetails.filter((c) => TEXTY_TYPES.has(c.dataType.toLowerCase()) && c.name !== targetColumn);
+  const textCols = colDetails.filter(
+    (c) => TEXTY_TYPES.has(c.dataType.toLowerCase()) && c.name !== targetColumn,
+  );
   for (const candidate of LABEL_COLUMN_CANDIDATES) {
     const match = textCols.find((c) => c.name.toLowerCase() === candidate);
     if (match) return match.name;
@@ -45,7 +55,15 @@ interface RelationPickerModalProps {
 const PAGE_SIZE = 10;
 
 export function RelationPickerModal({
-  open, onOpenChange, projectId, schema, table, column, nullable, currentValue, onSelect,
+  open,
+  onOpenChange,
+  projectId,
+  schema,
+  table,
+  column,
+  nullable,
+  currentValue,
+  onSelect,
 }: RelationPickerModalProps) {
   const [filterState, setFilterState] = useState<FilterState>(emptyFilterState());
   const [allColumns, setAllColumns] = useState<string[]>([]);
@@ -57,31 +75,34 @@ export function RelationPickerModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const runQuery = useCallback(async (state: FilterState, pageIndex: number) => {
-    const d = useProjectStore.getState().projects[projectId];
-    if (!d) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const driver = DriverFactory.getDriver(d.driver);
-      let sql = `SELECT * FROM ${quoteIdent(schema)}.${quoteIdent(table)}`;
-      const whereBody = buildConditionsSql(state);
-      if (whereBody) sql += ` WHERE ${whereBody}`;
-      // Fetch one extra row past the page so Next can be enabled/disabled without a COUNT(*).
-      sql += ` ORDER BY ${quoteIdent(column)} LIMIT ${PAGE_SIZE + 1} OFFSET ${pageIndex * PAGE_SIZE}`;
-      const [resultColumns, resultRows] = await driver.runQuery(projectId, sql);
-      setColumns(resultColumns);
-      setHasNextPage(resultRows.length > PAGE_SIZE);
-      setRows(resultRows.slice(0, PAGE_SIZE));
-    } catch (err: any) {
-      setError(err?.message ?? "Query failed");
-      setColumns([]);
-      setRows([]);
-      setHasNextPage(false);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, schema, table, column]);
+  const runQuery = useCallback(
+    async (state: FilterState, pageIndex: number) => {
+      const d = useProjectStore.getState().projects[projectId];
+      if (!d) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const driver = DriverFactory.getDriver(d.driver);
+        let sql = `SELECT * FROM ${quoteIdent(schema)}.${quoteIdent(table)}`;
+        const whereBody = buildConditionsSql(state);
+        if (whereBody) sql += ` WHERE ${whereBody}`;
+        // Fetch one extra row past the page so Next can be enabled/disabled without a COUNT(*).
+        sql += ` ORDER BY ${quoteIdent(column)} LIMIT ${PAGE_SIZE + 1} OFFSET ${pageIndex * PAGE_SIZE}`;
+        const [resultColumns, resultRows] = await driver.runQuery(projectId, sql);
+        setColumns(resultColumns);
+        setHasNextPage(resultRows.length > PAGE_SIZE);
+        setRows(resultRows.slice(0, PAGE_SIZE));
+      } catch (err: any) {
+        setError(err?.message ?? "Query failed");
+        setColumns([]);
+        setRows([]);
+        setHasNextPage(false);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [projectId, schema, table, column],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -97,23 +118,28 @@ export function RelationPickerModal({
     Promise.all([
       useProjectStore.getState().loadColumnDetails(projectId, schema, table),
       driver?.loadEnumTypes?.(projectId) ?? Promise.resolve([]),
-    ]).then(([colDetails, enumRows]) => {
-      setAllColumns(colDetails.map((c) => c.name));
+    ])
+      .then(([colDetails, enumRows]) => {
+        setAllColumns(colDetails.map((c) => c.name));
 
-      const enumLabelMap = buildEnumLabelMap(enumRows);
-      const kindMap = new Map<string, FilterColumnInfo>();
-      for (const c of colDetails) {
-        kindMap.set(c.name, classifyFilterColumnKind(c.dataType, c.udtName, enumLabelMap));
-      }
-      setColumnKinds(kindMap);
+        const enumLabelMap = buildEnumLabelMap(enumRows);
+        const kindMap = new Map<string, FilterColumnInfo>();
+        for (const c of colDetails) {
+          kindMap.set(c.name, classifyFilterColumnKind(c.dataType, c.udtName, enumLabelMap));
+        }
+        setColumnKinds(kindMap);
 
-      const seedColumn = pickDisplayColumn(colDetails, column) ?? column;
-      const seeded: FilterState = { open: true, conditions: [newColumnCondition(seedColumn, kindMap.get(seedColumn)?.kind ?? "text")] };
-      setFilterState(seeded);
-      void runQuery(seeded, 0);
-    }).catch(() => {
-      void runQuery(emptyFilterState(), 0);
-    });
+        const seedColumn = pickDisplayColumn(colDetails, column) ?? column;
+        const seeded: FilterState = {
+          open: true,
+          conditions: [newColumnCondition(seedColumn, kindMap.get(seedColumn)?.kind ?? "text")],
+        };
+        setFilterState(seeded);
+        void runQuery(seeded, 0);
+      })
+      .catch(() => {
+        void runQuery(emptyFilterState(), 0);
+      });
     // runQuery is stable for a given projectId/schema/table/column, which are already deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectId, schema, table, column]);
@@ -177,7 +203,13 @@ export function RelationPickerModal({
         <div className="h-[320px] border-t border-border/50 flex flex-col">
           {rows.length === 0 ? (
             <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground font-mono gap-2">
-              {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading...</> : !error && "No matching rows"}
+              {loading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading...
+                </>
+              ) : (
+                !error && "No matching rows"
+              )}
             </div>
           ) : (
             <ResultsGrid

@@ -1,7 +1,14 @@
 /** How a column's value should be edited in the results grid. "numeric" edits as plain text
  *  (a native number input would round arbitrary-precision numeric/decimal) but gets a
  *  comma-grouped read-only display. */
-export type ColumnEditKind = "text" | "numeric" | "boolean" | "date" | "time" | "timestamp" | "enum";
+export type ColumnEditKind =
+  | "text"
+  | "numeric"
+  | "boolean"
+  | "date"
+  | "time"
+  | "timestamp"
+  | "enum";
 
 /** The subset of kinds that render as an <input type="date"|"time"|"datetime-local">. */
 export type DateTimeEditKind = "date" | "time" | "timestamp";
@@ -33,7 +40,8 @@ export function classifyColumnEditKind(
   // "numeric"/"decimal" both report as "numeric"; float4/float8 report as "real"/"double precision".
   // Integers (integer, bigint, smallint) are deliberately left as plain "text" — comma-grouping an
   // id/count column fights copy-paste and visual scanning, which is why most DB tools skip it too.
-  if (type === "numeric" || type === "real" || type === "double precision") return { kind: "numeric", nullable };
+  if (type === "numeric" || type === "real" || type === "double precision")
+    return { kind: "numeric", nullable };
   // Everything else (character, uuid, json[b], arrays, bytea, ...) stays plain text — it's
   // already edited and displayed fine as raw text.
   return { kind: "text", nullable };

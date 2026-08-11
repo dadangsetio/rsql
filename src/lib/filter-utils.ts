@@ -1,10 +1,17 @@
-import { quoteIdent, quoteLiteral } from "./sql-utils";
 import type { FilterCondition, FilterOperator, FilterState, SortState } from "@/types";
+import { quoteIdent, quoteLiteral } from "./sql-utils";
 
 /** Column bucket for picking which comparison operators make sense (distinct from
  *  column-edit-kind.ts's ColumnEditKind — that one lumps integers into "text", which
  *  is wrong here since filtering needs >/< on integer columns). */
-export type FilterColumnKind = "numeric" | "text" | "boolean" | "date" | "time" | "timestamp" | "enum";
+export type FilterColumnKind =
+  | "numeric"
+  | "text"
+  | "boolean"
+  | "date"
+  | "time"
+  | "timestamp"
+  | "enum";
 
 export interface FilterColumnInfo {
   kind: FilterColumnKind;
@@ -12,7 +19,16 @@ export interface FilterColumnInfo {
 }
 
 const NUMERIC_TYPES = new Set([
-  "smallint", "integer", "bigint", "decimal", "numeric", "real", "double precision", "serial", "bigserial", "money",
+  "smallint",
+  "integer",
+  "bigint",
+  "decimal",
+  "numeric",
+  "real",
+  "double precision",
+  "serial",
+  "bigserial",
+  "money",
 ]);
 
 /** Classify a Postgres column's information_schema data_type for the filter bar's operator picker. */
@@ -66,7 +82,12 @@ export const OPERATORS_BY_KIND: Record<FilterColumnKind, FilterOperator[]> = {
 };
 
 /** Operators that don't take a value input at all. */
-export const VALUELESS_OPERATORS: FilterOperator[] = ["is_null", "is_not_null", "is_true", "is_false"];
+export const VALUELESS_OPERATORS: FilterOperator[] = [
+  "is_null",
+  "is_not_null",
+  "is_true",
+  "is_false",
+];
 
 export function operatorNeedsValue(op: FilterOperator): boolean {
   return !VALUELESS_OPERATORS.includes(op);
@@ -84,28 +105,45 @@ export function conditionToSql(cond: FilterCondition): string | null {
 
   const col = quoteIdent(cond.column);
   switch (cond.operator) {
-    case "eq": return cond.value ? `${col} = ${quoteLiteral(cond.value)}` : null;
-    case "neq": return cond.value ? `${col} != ${quoteLiteral(cond.value)}` : null;
-    case "gt": return cond.value ? `${col} > ${quoteLiteral(cond.value)}` : null;
-    case "lt": return cond.value ? `${col} < ${quoteLiteral(cond.value)}` : null;
-    case "gte": return cond.value ? `${col} >= ${quoteLiteral(cond.value)}` : null;
-    case "lte": return cond.value ? `${col} <= ${quoteLiteral(cond.value)}` : null;
-    case "contains": return cond.value ? `${col} ILIKE ${quoteLiteral(`%${cond.value}%`)}` : null;
-    case "starts_with": return cond.value ? `${col} ILIKE ${quoteLiteral(`${cond.value}%`)}` : null;
-    case "ends_with": return cond.value ? `${col} ILIKE ${quoteLiteral(`%${cond.value}`)}` : null;
+    case "eq":
+      return cond.value ? `${col} = ${quoteLiteral(cond.value)}` : null;
+    case "neq":
+      return cond.value ? `${col} != ${quoteLiteral(cond.value)}` : null;
+    case "gt":
+      return cond.value ? `${col} > ${quoteLiteral(cond.value)}` : null;
+    case "lt":
+      return cond.value ? `${col} < ${quoteLiteral(cond.value)}` : null;
+    case "gte":
+      return cond.value ? `${col} >= ${quoteLiteral(cond.value)}` : null;
+    case "lte":
+      return cond.value ? `${col} <= ${quoteLiteral(cond.value)}` : null;
+    case "contains":
+      return cond.value ? `${col} ILIKE ${quoteLiteral(`%${cond.value}%`)}` : null;
+    case "starts_with":
+      return cond.value ? `${col} ILIKE ${quoteLiteral(`${cond.value}%`)}` : null;
+    case "ends_with":
+      return cond.value ? `${col} ILIKE ${quoteLiteral(`%${cond.value}`)}` : null;
     case "between":
       return cond.value && cond.value2
         ? `${col} BETWEEN ${quoteLiteral(cond.value)} AND ${quoteLiteral(cond.value2)}`
         : null;
     case "in": {
-      const values = cond.value.split(",").map((v) => v.trim()).filter(Boolean);
+      const values = cond.value
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
       return values.length ? `${col} IN (${values.map(quoteLiteral).join(", ")})` : null;
     }
-    case "is_null": return `${col} IS NULL`;
-    case "is_not_null": return `${col} IS NOT NULL`;
-    case "is_true": return `${col} IS TRUE`;
-    case "is_false": return `${col} IS FALSE`;
-    default: return null;
+    case "is_null":
+      return `${col} IS NULL`;
+    case "is_not_null":
+      return `${col} IS NOT NULL`;
+    case "is_true":
+      return `${col} IS TRUE`;
+    case "is_false":
+      return `${col} IS FALSE`;
+    default:
+      return null;
   }
 }
 
@@ -165,7 +203,14 @@ export function emptyFilterState(): FilterState {
 }
 
 export function newColumnCondition(column: string, kind: FilterColumnKind): FilterCondition {
-  return { id: crypto.randomUUID(), type: "column", join: "and", column, operator: OPERATORS_BY_KIND[kind][0], value: "" };
+  return {
+    id: crypto.randomUUID(),
+    type: "column",
+    join: "and",
+    column,
+    operator: OPERATORS_BY_KIND[kind][0],
+    value: "",
+  };
 }
 
 export function newRawCondition(): FilterCondition {

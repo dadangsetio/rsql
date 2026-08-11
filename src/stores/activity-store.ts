@@ -25,7 +25,13 @@ export const useActivityStore = create<ActivityState>()(
 
     log: (level, message, detail) => {
       set((s) => {
-        s.entries.unshift({ id: `act-${++activityId}`, timestamp: Date.now(), level, message, detail });
+        s.entries.unshift({
+          id: `act-${++activityId}`,
+          timestamp: Date.now(),
+          level,
+          message,
+          detail,
+        });
         s.entries.length = Math.min(s.entries.length, 500);
       });
     },

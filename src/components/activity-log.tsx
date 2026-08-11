@@ -1,7 +1,7 @@
+import { Check, CheckCircle2, Copy, Info, ScrollText, Trash2, XCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useActivityStore, type ActivityEntry } from "@/stores/activity-store";
 import { cn } from "@/lib/utils";
-import { ScrollText, Trash2, CheckCircle2, XCircle, Info, Copy, Check } from "lucide-react";
+import { type ActivityEntry, useActivityStore } from "@/stores/activity-store";
 
 const TRUNCATE_AT = 140;
 
@@ -13,7 +13,9 @@ function LevelIcon({ level }: { level: ActivityEntry["level"] }) {
 
 function entryText(entry: ActivityEntry): string {
   const time = new Date(entry.timestamp).toLocaleTimeString();
-  return entry.detail ? `[${time}] ${entry.message}\n${entry.detail}` : `[${time}] ${entry.message}`;
+  return entry.detail
+    ? `[${time}] ${entry.message}\n${entry.detail}`
+    : `[${time}] ${entry.message}`;
 }
 
 function CopyButton({ getText, className }: { getText: () => string; className?: string }) {
@@ -111,7 +113,10 @@ export function ActivityLog() {
               ACTIVITY ({entries.length}){selected.size > 0 && ` • ${selected.size} selected`}
             </span>
             <button
-              onClick={() => { clear(); setExpandedId(null); }}
+              onClick={() => {
+                clear();
+                setExpandedId(null);
+              }}
               className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
             >
               <Trash2 className="h-3 w-3" />
@@ -127,15 +132,18 @@ export function ActivityLog() {
               entries.map((entry) => {
                 const isExpanded = expandedId === entry.id;
                 const isLong = entry.message.length > TRUNCATE_AT || !!entry.detail;
-                const shown = !isExpanded && entry.message.length > TRUNCATE_AT
-                  ? entry.message.slice(0, TRUNCATE_AT) + "…"
-                  : entry.message;
+                const shown =
+                  !isExpanded && entry.message.length > TRUNCATE_AT
+                    ? entry.message.slice(0, TRUNCATE_AT) + "…"
+                    : entry.message;
 
                 return (
                   <div
                     key={entry.id}
                     onClick={() => isLong && setExpandedId(isExpanded ? null : entry.id)}
-                    onMouseDown={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey) toggleSelect(entry.id, e); }}
+                    onMouseDown={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey) toggleSelect(entry.id, e);
+                    }}
                     className={cn(
                       "group flex items-start gap-2 border-b border-border/50 px-3 py-1.5 last:border-b-0",
                       isLong && "cursor-pointer hover:bg-accent/30",
@@ -153,7 +161,11 @@ export function ActivityLog() {
                         </pre>
                       )}
                       <div className="text-[10px] text-muted-foreground">
-                        {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                        {new Date(entry.timestamp).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
                       </div>
                     </div>
                     <CopyButton getText={() => entryText(entry)} className="mt-0.5" />

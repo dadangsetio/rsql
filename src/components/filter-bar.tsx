@@ -1,20 +1,23 @@
 import { Code2, Plus, X } from "lucide-react";
-import type { FilterCondition, FilterOperator, FilterState } from "@/types";
 import {
-  OPERATORS_BY_KIND,
-  OPERATOR_LABELS,
-  operatorNeedsValue,
-  newColumnCondition,
-  newRawCondition,
   type FilterColumnInfo,
   type FilterColumnKind,
+  newColumnCondition,
+  newRawCondition,
+  OPERATOR_LABELS,
+  OPERATORS_BY_KIND,
+  operatorNeedsValue,
 } from "@/lib/filter-utils";
+import type { FilterCondition, FilterOperator, FilterState } from "@/types";
 
-const inputClass = "h-7 rounded border border-border bg-input px-2 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring";
-const selectClass = "h-7 bg-input border border-border rounded text-xs font-mono text-foreground px-1.5 outline-none focus:ring-1 focus:ring-ring cursor-pointer";
+const inputClass =
+  "h-7 rounded border border-border bg-input px-2 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring";
+const selectClass =
+  "h-7 bg-input border border-border rounded text-xs font-mono text-foreground px-1.5 outline-none focus:ring-1 focus:ring-ring cursor-pointer";
 // Every row (including the "Where"/"and"/"or" lead-in) aligns to this width so stacked
 // conditions read as a column, not a wall of text — the single biggest scan-ability win.
-const GUTTER = "w-11 shrink-0 text-right text-[10px] font-mono uppercase tracking-wide text-muted-foreground";
+const GUTTER =
+  "w-11 shrink-0 text-right text-[10px] font-mono uppercase tracking-wide text-muted-foreground";
 // Sentinel option value in the column dropdown that switches a row to a raw-SQL condition —
 // picking it is how you get raw SQL, not a separate mode or a separate "add" button.
 const RAW_OPTION = "__raw_sql__";
@@ -28,7 +31,14 @@ interface FilterBarProps {
   builderAvailable: boolean;
 }
 
-export function FilterBar({ state, onChange, onApply, columns, columnKinds, builderAvailable }: FilterBarProps) {
+export function FilterBar({
+  state,
+  onChange,
+  onApply,
+  columns,
+  columnKinds,
+  builderAvailable,
+}: FilterBarProps) {
   const kindFor = (col: string): FilterColumnKind => columnKinds.get(col)?.kind ?? "text";
 
   const addCondition = () => {
@@ -36,7 +46,9 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
       ...state,
       conditions: [
         ...state.conditions,
-        builderAvailable && columns.length > 0 ? newColumnCondition(columns[0], kindFor(columns[0])) : newRawCondition(),
+        builderAvailable && columns.length > 0
+          ? newColumnCondition(columns[0], kindFor(columns[0]))
+          : newRawCondition(),
       ],
     };
     onChange(next);
@@ -51,7 +63,9 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
   const toggleJoin = (id: string) => {
     const next = {
       ...state,
-      conditions: state.conditions.map((c) => (c.id === id ? { ...c, join: c.join === "or" ? ("and" as const) : ("or" as const) } : c)),
+      conditions: state.conditions.map((c) =>
+        c.id === id ? { ...c, join: c.join === "or" ? ("and" as const) : ("or" as const) } : c,
+      ),
     };
     onChange(next);
     onApply(next);
@@ -72,7 +86,11 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
             {i === 0 ? (
               <span className={GUTTER}>Where</span>
             ) : (
-              <button onClick={() => toggleJoin(cond.id)} className={`${GUTTER} hover:text-foreground transition-colors`} title="Toggle AND / OR for this condition">
+              <button
+                onClick={() => toggleJoin(cond.id)}
+                className={`${GUTTER} hover:text-foreground transition-colors`}
+                title="Toggle AND / OR for this condition"
+              >
                 {cond.join === "or" ? "or" : "and"}
               </button>
             )}
@@ -83,20 +101,36 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
                 value={cond.type === "raw" ? RAW_OPTION : cond.column}
                 onChange={(e) => {
                   if (e.target.value === RAW_OPTION) {
-                    replaceCondition(cond.id, { id: cond.id, type: "raw", join: cond.join, sql: "" }, false);
+                    replaceCondition(
+                      cond.id,
+                      { id: cond.id, type: "raw", join: cond.join, sql: "" },
+                      false,
+                    );
                   } else {
                     const newKind = kindFor(e.target.value);
                     const defaultOp = OPERATORS_BY_KIND[newKind][0];
                     replaceCondition(
                       cond.id,
-                      { id: cond.id, type: "column", join: cond.join, column: e.target.value, operator: defaultOp, value: "" },
+                      {
+                        id: cond.id,
+                        type: "column",
+                        join: cond.join,
+                        column: e.target.value,
+                        operator: defaultOp,
+                        value: "",
+                      },
                       !operatorNeedsValue(defaultOp),
                     );
                   }
                 }}
                 className={`${selectClass} w-32`}
               >
-                {builderAvailable && columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                {builderAvailable &&
+                  columns.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
                 <option value={RAW_OPTION}>Raw SQL</option>
               </select>
 
@@ -108,8 +142,12 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
                     autoFocus={i === 0}
                     placeholder="status = 'active' or archived is true"
                     value={cond.sql}
-                    onChange={(e) => replaceCondition(cond.id, { ...cond, sql: e.target.value }, false)}
-                    onKeyDown={(e) => { if (e.key === "Enter") replaceCondition(cond.id, cond, true); }}
+                    onChange={(e) =>
+                      replaceCondition(cond.id, { ...cond, sql: e.target.value }, false)
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") replaceCondition(cond.id, cond, true);
+                    }}
                     onBlur={() => replaceCondition(cond.id, cond, true)}
                     className={`${inputClass} flex-1 min-w-0`}
                   />
@@ -120,12 +158,18 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
                     value={cond.operator}
                     onChange={(e) => {
                       const op = e.target.value as FilterOperator;
-                      replaceCondition(cond.id, { ...cond, operator: op, value: "", value2: undefined }, !operatorNeedsValue(op));
+                      replaceCondition(
+                        cond.id,
+                        { ...cond, operator: op, value: "", value2: undefined },
+                        !operatorNeedsValue(op),
+                      );
                     }}
                     className={`${selectClass} w-28`}
                   >
                     {OPERATORS_BY_KIND[kind].map((op) => (
-                      <option key={op} value={op}>{OPERATOR_LABELS[op]}</option>
+                      <option key={op} value={op}>
+                        {OPERATOR_LABELS[op]}
+                      </option>
                     ))}
                   </select>
                   {operatorNeedsValue(cond.operator) && (
@@ -141,14 +185,18 @@ export function FilterBar({ state, onChange, onApply, columns, columnKinds, buil
                       />
                       {cond.operator === "between" && (
                         <>
-                          <span className="text-[10px] font-mono text-muted-foreground shrink-0">and</span>
+                          <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                            and
+                          </span>
                           <ValueInput
                             kind={kind}
                             columnKinds={columnKinds}
                             column={cond.column}
                             operator={cond.operator}
                             value={cond.value2 ?? ""}
-                            onChange={(v) => replaceCondition(cond.id, { ...cond, value2: v }, false)}
+                            onChange={(v) =>
+                              replaceCondition(cond.id, { ...cond, value2: v }, false)
+                            }
                             onApply={() => replaceCondition(cond.id, cond, true)}
                           />
                         </>
@@ -206,7 +254,9 @@ function ValueInput({
   const shared = {
     value,
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange(e.target.value),
-    onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter") onApply(); },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") onApply();
+    },
     onBlur: onApply,
     className: `${inputClass} flex-1 min-w-0`,
   };
@@ -217,11 +267,24 @@ function ValueInput({
   if (kind === "enum" && operator !== "in") {
     const options = columnKinds.get(column)?.enumValues ?? [];
     return (
-      <select value={value} onChange={(e) => { onChange(e.target.value); onApply(); }} className={`${selectClass} flex-1 min-w-0`}>
+      <select
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          onApply();
+        }}
+        className={`${selectClass} flex-1 min-w-0`}
+      >
         <option value="">—</option>
-        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
       </select>
     );
   }
-  return <input type="text" placeholder={operator === "in" ? "value1, value2" : "value"} {...shared} />;
+  return (
+    <input type="text" placeholder={operator === "in" ? "value1, value2" : "value"} {...shared} />
+  );
 }
