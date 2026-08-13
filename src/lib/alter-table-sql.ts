@@ -144,6 +144,12 @@ export const PG_COMMON_TYPES = [
 
 export const FK_ACTIONS = ["NO ACTION", "RESTRICT", "CASCADE", "SET NULL", "SET DEFAULT"];
 
+function assertValidFkAction(action: string, label: "ON UPDATE" | "ON DELETE"): void {
+  if (!FK_ACTIONS.includes(action)) {
+    throw new Error(`Invalid ${label} action: "${action}"`);
+  }
+}
+
 export function generateAlterTableSQL(
   schema: string,
   table: string,
@@ -269,6 +275,8 @@ export function generateAlterTableSQL(
 
   for (const fk of draft.foreignKeys) {
     if (fk._status === "added") {
+      assertValidFkAction(fk.onUpdate, "ON UPDATE");
+      assertValidFkAction(fk.onDelete, "ON DELETE");
       const srcCols = fk.sourceColumns.map(quoteIdent).join(", ");
       const tgtCols = fk.targetColumns.map(quoteIdent).join(", ");
       const tgtTable = `${quoteIdent(fk.targetSchema)}.${quoteIdent(fk.targetTable)}`;
@@ -370,6 +378,8 @@ export function generateCreateTableSQL(
 
   for (const fk of draft.foreignKeys) {
     if (fk._status === "removed") continue;
+    assertValidFkAction(fk.onUpdate, "ON UPDATE");
+    assertValidFkAction(fk.onDelete, "ON DELETE");
     const srcCols = fk.sourceColumns.map(quoteIdent).join(", ");
     const tgtCols = fk.targetColumns.map(quoteIdent).join(", ");
     const tgtTable = `${quoteIdent(fk.targetSchema)}.${quoteIdent(fk.targetTable)}`;

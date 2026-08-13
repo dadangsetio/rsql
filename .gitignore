@@ -36,6 +36,7 @@ query_db/
 
 # Agent working notes
 docs/superpowers/
+.superpowers/
 
 # Ruflo local secrets and runtime data
 .env

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useProjectStore } from "@/stores/project-store";
 import { useTabStore } from "@/stores/tab-store";
@@ -8,27 +7,20 @@ import { ColumnsContent } from "./columns-tab";
 import { DDLContent } from "./ddl-tab";
 import { ForeignKeysContent } from "./foreign-keys-tab";
 import { IndexesContent } from "./indexes-tab";
-import { ModalHeader } from "./modal-header";
 import { OverviewContent } from "./overview-tab";
+import { PropertiesPanelHeader } from "./panel-header";
 import { StructureEditorContent } from "./structure-editor";
-import type { ObjectPropertiesModalProps, Tab } from "./types";
+import type { ObjectPropertiesPanelProps, Tab } from "./types";
 import { useObjectData } from "./use-object-data";
 
-export function ObjectPropertiesModal({
-  open,
-  onOpenChange,
+export function ObjectPropertiesPanel({
+  onClose,
   objectType,
   projectId,
   schema,
   name,
-}: ObjectPropertiesModalProps) {
-  const defaultTab: Tab =
-    objectType === "table"
-      ? "overview"
-      : objectType === "function" || objectType === "trigger-function"
-        ? "overview"
-        : "overview";
-  const [activeTab, setActiveTab] = useState<Tab>(defaultTab);
+}: ObjectPropertiesPanelProps) {
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [copied, setCopied] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<{
     type: "success" | "error";
@@ -42,7 +34,6 @@ export function ObjectPropertiesModal({
     ddl,
     ddlLoading,
     ddlError,
-    loading,
     tableStats,
     outgoingFKs,
     incomingFKs,
@@ -53,7 +44,7 @@ export function ObjectPropertiesModal({
     getDriver,
     fetchLiveData,
     fetchDDL,
-  } = useObjectData(projectId, schema, name, objectType, open);
+  } = useObjectData(projectId, schema, name, objectType, true);
 
   const columnDetails = useProjectStore((s) => s.columnDetails);
   const indexes = useProjectStore((s) => s.indexes);
@@ -72,18 +63,10 @@ export function ObjectPropertiesModal({
   const pkCols = new Set((idxs ?? []).filter((i) => i.isPrimary).map((i) => i.columnName));
 
   useEffect(() => {
-    if (!open) return;
-    setActiveTab(objectType === "table" ? "overview" : "overview");
-    setCopied(null);
-    setActionResult(null);
-    setConfirmAction(null);
-  }, [open, objectType]);
-
-  useEffect(() => {
-    if (open && activeTab === "ddl" && !ddl && !ddlLoading) {
+    if (activeTab === "ddl" && !ddl && !ddlLoading) {
       void fetchDDL();
     }
-  }, [open, activeTab, ddl, ddlLoading, fetchDDL]);
+  }, [activeTab, ddl, ddlLoading, fetchDDL]);
 
   const copyText = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -132,115 +115,110 @@ export function ObjectPropertiesModal({
   availableTabs.push({ key: "actions", label: "Actions" });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[760px] h-[85vh] flex flex-col p-0 gap-0 overflow-hidden">
-        <ModalHeader
-          objectType={objectType}
-          schema={schema}
-          name={name}
-          projectId={projectId}
-          loading={loading}
-          copied={copied}
-          copyText={copyText}
-          availableTabs={availableTabs}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-        />
+    <div className="h-full flex flex-col overflow-hidden bg-background">
+      <PropertiesPanelHeader
+        availableTabs={availableTabs}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onClose={onClose}
+      />
 
-        <div
-          className={cn(
-            "flex-1 min-h-0 px-5 pb-5",
-            activeTab === "ddl" || activeTab === "structure"
-              ? "flex flex-col overflow-hidden"
-              : "overflow-y-auto",
-          )}
-        >
-          {activeTab === "structure" && objectType === "table" && (
-            <StructureEditorContent
-              projectId={projectId}
-              schema={schema}
-              tableName={name}
-              cols={cols}
-              idxs={idxs}
-              cons={cons}
-              outgoingFKs={outgoingFKs}
-              getDriver={getDriver}
-              onApplied={() => {
-                void fetchLiveData();
-                useProjectStore.setState((s) => {
-                  delete s.columnDetails[metaKey];
-                  delete s.indexes[metaKey];
-                  delete s.constraints[metaKey];
-                });
-              }}
-              openTab={openTab}
-              onOpenChange={onOpenChange}
-            />
-          )}
-          {activeTab === "overview" && (
-            <OverviewContent
-              objectType={objectType}
-              tableStats={tableStats}
-              viewInfo={viewInfo}
-              matViewStats={matViewStats}
-              functionMeta={functionMeta}
-              cons={cons}
-              trigs={trigs}
-              rls={rls}
-              pols={pols}
-              copyText={copyText}
-              copied={copied}
-            />
-          )}
-          {activeTab === "columns" && <ColumnsContent cols={cols} pkCols={pkCols} />}
-          {activeTab === "indexes" && <IndexesContent idxs={idxs} />}
-          {activeTab === "fkeys" && (
-            <ForeignKeysContent
-              outgoingFKs={outgoingFKs}
-              incomingFKs={incomingFKs}
-              openTab={openTab}
-              projectId={projectId}
-              onOpenChange={onOpenChange}
-            />
-          )}
-          {activeTab === "ddl" && (
-            <DDLContent
-              ddl={ddl}
-              ddlLoading={ddlLoading}
-              ddlError={ddlError}
-              copied={copied}
-              onCopy={() => ddl && copyText(ddl, "ddl")}
-              onRetry={fetchDDL}
-              onOpenInTab={() => {
-                if (ddl) {
-                  openTab(projectId, ddl);
-                  onOpenChange(false);
-                }
-              }}
-            />
-          )}
-          {activeTab === "actions" && (
-            <ActionsContent
-              objectType={objectType}
-              schema={schema}
-              name={name}
-              actionResult={actionResult}
-              actionLoading={actionLoading}
-              confirmAction={confirmAction}
-              setConfirmAction={(v) => {
-                setConfirmAction(v);
-                setConfirmInput("");
-              }}
-              confirmInput={confirmInput}
-              setConfirmInput={setConfirmInput}
-              runAction={runAction}
-              openTab={openTab}
-              projectId={projectId}
-              onOpenChange={onOpenChange}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+      <div
+        className={cn(
+          "flex-1 min-h-0 px-5 pb-5",
+          activeTab === "ddl" || activeTab === "structure"
+            ? "flex flex-col overflow-hidden"
+            : "overflow-y-auto",
+        )}
+      >
+        {activeTab === "structure" && objectType === "table" && (
+          <StructureEditorContent
+            projectId={projectId}
+            schema={schema}
+            tableName={name}
+            cols={cols}
+            idxs={idxs}
+            cons={cons}
+            outgoingFKs={outgoingFKs}
+            getDriver={getDriver}
+            onApplied={() => {
+              void fetchLiveData();
+              useProjectStore.setState((s) => {
+                delete s.columnDetails[metaKey];
+                delete s.indexes[metaKey];
+                delete s.constraints[metaKey];
+              });
+            }}
+            openTab={openTab}
+            onClose={onClose}
+          />
+        )}
+        {activeTab === "overview" && (
+          <OverviewContent
+            objectType={objectType}
+            schema={schema}
+            name={name}
+            projectId={projectId}
+            tableStats={tableStats}
+            viewInfo={viewInfo}
+            matViewStats={matViewStats}
+            functionMeta={functionMeta}
+            cons={cons}
+            trigs={trigs}
+            rls={rls}
+            pols={pols}
+            copyText={copyText}
+            copied={copied}
+          />
+        )}
+        {activeTab === "columns" && <ColumnsContent cols={cols} pkCols={pkCols} />}
+        {activeTab === "indexes" && <IndexesContent idxs={idxs} />}
+        {activeTab === "fkeys" && (
+          <ForeignKeysContent
+            outgoingFKs={outgoingFKs}
+            incomingFKs={incomingFKs}
+            openTab={openTab}
+            projectId={projectId}
+            onClose={onClose}
+          />
+        )}
+        {activeTab === "ddl" && (
+          <DDLContent
+            ddl={ddl}
+            ddlLoading={ddlLoading}
+            ddlError={ddlError}
+            copied={copied}
+            onCopy={() => ddl && copyText(ddl, "ddl")}
+            onRetry={fetchDDL}
+            onOpenInTab={() => {
+              if (ddl) {
+                openTab(projectId, ddl);
+                onClose();
+              }
+            }}
+          />
+        )}
+        {activeTab === "actions" && (
+          <ActionsContent
+            objectType={objectType}
+            schema={schema}
+            name={name}
+            actionResult={actionResult}
+            actionLoading={actionLoading}
+            confirmAction={confirmAction}
+            setConfirmAction={(v) => {
+              setConfirmAction(v);
+              setConfirmInput("");
+            }}
+            confirmInput={confirmInput}
+            setConfirmInput={setConfirmInput}
+            runAction={runAction}
+            openTab={openTab}
+            projectId={projectId}
+            onClose={onClose}
+          />
+        )}
+      </div>
+    </div>
   );
 }

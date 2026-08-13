@@ -63,6 +63,10 @@ export interface Tab {
   /** Identifies the in-flight query so cancel targets this tab's query only. */
   execId?: string;
   result?: QueryResult;
+  /** Set when the last run executed more than one query group; `result` mirrors
+   *  `results[activeResultIndex]` so every existing single-result reader keeps working. */
+  results?: QueryResult[];
+  activeResultIndex?: number;
   explainResult?: ExplainPlan;
   virtualQuery?: VirtualQuery;
   queryTimeout?: number;
@@ -74,6 +78,17 @@ export interface Tab {
   editSession?: EditSession;
   filter?: FilterState;
   sort?: SortState;
+  /** Identifies the schema object this tab was opened for (set when the sidebar opens a
+   *  table's data, or an object's DDL/definition) so a later "Properties" click can find and
+   *  reuse this tab instead of opening a duplicate. */
+  propertiesTarget?: {
+    objectType: "table" | "view" | "matview" | "function" | "trigger-function";
+    schema: string;
+    name: string;
+  };
+  /** True while this tab's pane shows the inline properties view in place of the editor +
+   *  results grid. */
+  showProperties?: boolean;
 }
 
 /** Comparison operators offered by the results filter bar, keyed by column kind (see filter-utils.ts). */
@@ -172,6 +187,9 @@ export interface QueryResult {
   rows: CellValue[][];
   time: number;
   capped?: boolean;
+  /** The query group this result came from — only set for a multi-group run, for tab labels. */
+  sql?: string;
+  error?: boolean;
 }
 
 export interface VirtualQuery {

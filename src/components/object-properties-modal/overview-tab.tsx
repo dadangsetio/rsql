@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Check,
+  Copy,
   Database,
   HardDrive,
   Key,
@@ -22,8 +23,19 @@ import {
 } from "./shared";
 import type { FunctionMeta, MatViewStats, ObjectType, TableStats, ViewInfo } from "./types";
 
+const objectLabel: Record<ObjectType, string> = {
+  table: "Table",
+  view: "View",
+  matview: "Materialized View",
+  function: "Function",
+  "trigger-function": "Trigger Function",
+};
+
 export function OverviewContent({
   objectType,
+  schema,
+  name,
+  projectId,
   tableStats,
   viewInfo,
   matViewStats,
@@ -36,6 +48,9 @@ export function OverviewContent({
   copied,
 }: {
   objectType: ObjectType;
+  schema: string;
+  name: string;
+  projectId: string;
   tableStats: TableStats | null;
   viewInfo: ViewInfo | null;
   matViewStats: MatViewStats | null;
@@ -47,12 +62,48 @@ export function OverviewContent({
   copyText: (text: string, label: string) => void;
   copied: string | null;
 }) {
+  const identity = (
+    <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-border/20">
+      <div className="flex items-center gap-2 min-w-0">
+        <h2 className="m-0 font-mono font-semibold text-base text-foreground tracking-tight truncate">
+          {name}
+        </h2>
+        <button
+          type="button"
+          onClick={() => copyText(`"${schema}"."${name}"`, "name")}
+          className="text-muted-foreground/40 hover:text-foreground transition-colors shrink-0"
+          title="Copy qualified name"
+        >
+          {copied === "name" ? (
+            <Check className="h-3 w-3 text-success" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/40 text-[10px] font-medium uppercase tracking-wider">
+          {objectLabel[objectType]}
+        </span>
+        <span className="font-mono text-[11px]">{schema}</span>
+        <span className="text-muted-foreground/30">|</span>
+        <span className="font-mono text-[11px] text-muted-foreground/60">{projectId}</span>
+      </div>
+    </div>
+  );
+
   if (objectType === "table") {
     if (!tableStats) {
-      return <LoadingPlaceholder />;
+      return (
+        <div className="space-y-3 py-3">
+          {identity}
+          <LoadingPlaceholder />
+        </div>
+      );
     }
     return (
-      <div className="space-y-4 py-3">
+      <div className="space-y-3 py-3">
+        {identity}
         {/* Stats grid */}
         <div className="grid grid-cols-3 gap-2">
           <StatCard
@@ -205,16 +256,36 @@ export function OverviewContent({
   }
 
   if (objectType === "view") {
-    return <ViewOverview viewInfo={viewInfo} />;
+    return (
+      <div className="space-y-3 py-3">
+        {identity}
+        <ViewOverview viewInfo={viewInfo} />
+      </div>
+    );
   }
 
   if (objectType === "matview") {
-    return <ViewOverview matViewStats={matViewStats} />;
+    return (
+      <div className="space-y-3 py-3">
+        {identity}
+        <ViewOverview matViewStats={matViewStats} />
+      </div>
+    );
   }
 
   if (objectType === "function" || objectType === "trigger-function") {
-    return <FunctionOverview functionMeta={functionMeta} copyText={copyText} copied={copied} />;
+    return (
+      <div className="space-y-3 py-3">
+        {identity}
+        <FunctionOverview functionMeta={functionMeta} copyText={copyText} copied={copied} />
+      </div>
+    );
   }
 
-  return <LoadingPlaceholder />;
+  return (
+    <div className="space-y-3 py-3">
+      {identity}
+      <LoadingPlaceholder />
+    </div>
+  );
 }

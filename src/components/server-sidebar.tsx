@@ -20,6 +20,7 @@ export function ServerSidebar({
   const removeQuery = useQueryStore((s) => s.removeQuery);
 
   const [selectedQueryId, setSelectedQueryId] = React.useState<string | null>(null);
+  const [rightTab, setRightTab] = React.useState<"tree" | "saved">("tree");
 
   React.useEffect(() => {
     if (!queriesLoaded) void loadQueries();
@@ -28,31 +29,56 @@ export function ServerSidebar({
   const copy = (text: string) => navigator.clipboard.writeText(text);
 
   return (
-    <div className="flex h-full flex-col border-r border-sidebar-border bg-sidebar select-none">
-      <OpenDatabaseTabs onEditConnection={onEditConnection} />
-
-      <div className="flex-1 overflow-y-auto overflow-x-auto">
-        {activeDatabaseTab ? (
-          <DatabaseTree key={activeDatabaseTab} projectId={activeDatabaseTab} />
-        ) : (
-          <div className="flex h-full items-center justify-center p-6 text-center">
-            <p className="text-xs text-muted-foreground/60">Pick a Connection to get started.</p>
-          </div>
-        )}
+    <div className="flex h-full border-r border-sidebar-border bg-sidebar select-none">
+      {/* Left: database tabs, TablePlus-style connection dock */}
+      <div className="w-[76px] shrink-0 border-r border-sidebar-border overflow-hidden">
+        <OpenDatabaseTabs onEditConnection={onEditConnection} />
       </div>
 
-      {/* Saved Queries — always visible */}
-      <div className="border-t border-sidebar-border">
-        <div className="flex h-8 items-center justify-between px-3">
-          <span className="tracking-widest uppercase text-[10px] font-semibold text-sidebar-foreground">
-            SAVED QUERIES
-          </span>
-          {savedQueries.length > 0 && (
-            <span className="text-[10px] text-muted-foreground">{savedQueries.length}</span>
-          )}
+      {/* Right: schema tree for the active database / saved queries, as tabs */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex h-8 shrink-0 items-center border-b border-sidebar-border">
+          <button
+            onClick={() => setRightTab("tree")}
+            className={cn(
+              "flex h-full items-center px-3 text-[10px] font-semibold uppercase tracking-widest transition-colors",
+              rightTab === "tree"
+                ? "border-b-2 border-primary text-sidebar-foreground"
+                : "border-b-2 border-transparent text-muted-foreground hover:text-sidebar-foreground",
+            )}
+          >
+            Tables
+          </button>
+          <button
+            onClick={() => setRightTab("saved")}
+            className={cn(
+              "flex h-full items-center gap-1.5 px-3 text-[10px] font-semibold uppercase tracking-widest transition-colors",
+              rightTab === "saved"
+                ? "border-b-2 border-primary text-sidebar-foreground"
+                : "border-b-2 border-transparent text-muted-foreground hover:text-sidebar-foreground",
+            )}
+          >
+            Saved Queries
+            {savedQueries.length > 0 && (
+              <span className="text-[10px] text-muted-foreground">{savedQueries.length}</span>
+            )}
+          </button>
         </div>
-        {savedQueries.length > 0 ? (
-          <div className="overflow-y-auto p-1 max-h-48">
+
+        {rightTab === "tree" ? (
+          <div className="flex-1 overflow-y-auto overflow-x-auto">
+            {activeDatabaseTab ? (
+              <DatabaseTree key={activeDatabaseTab} projectId={activeDatabaseTab} />
+            ) : (
+              <div className="flex h-full items-center justify-center p-6 text-center">
+                <p className="text-xs text-muted-foreground/60">
+                  Pick a Connection to get started.
+                </p>
+              </div>
+            )}
+          </div>
+        ) : savedQueries.length > 0 ? (
+          <div className="flex-1 overflow-y-auto p-1">
             {savedQueries.map((q) => (
               <button
                 key={q.id}
@@ -98,7 +124,7 @@ export function ServerSidebar({
             ))}
           </div>
         ) : (
-          <div className="px-3 pb-2 text-[11px] text-muted-foreground/60">
+          <div className="flex-1 px-3 pt-2 text-[11px] text-muted-foreground/60">
             No saved queries yet. Use the Save button in the toolbar to save the current query.
           </div>
         )}

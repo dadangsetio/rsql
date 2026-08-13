@@ -56,7 +56,7 @@ export function OpenDatabaseTabs({
   if (openDatabaseTabs.length === 0) return null;
 
   return (
-    <div className="flex items-center gap-0.5 overflow-x-auto overflow-y-hidden whitespace-nowrap scrollbar-none border-b border-sidebar-border px-1.5 py-1">
+    <div className="flex h-full flex-col items-center gap-1.5 overflow-y-auto p-1.5">
       {openDatabaseTabs.map((pid) => {
         const isActive = activeDatabaseTab === pid;
         const pStatus = status[pid];
@@ -157,28 +157,31 @@ export function OpenDatabaseTabs({
                 },
               ])
             }
+            title={label}
             className={cn(
-              "group flex shrink-0 items-center gap-1.5 px-2.5 py-1 rounded-lg transition-all duration-150 cursor-pointer select-none font-mono text-xs",
+              "group relative flex h-16 w-16 shrink-0 flex-col items-center justify-center gap-1 rounded-lg p-1 transition-all duration-150 cursor-pointer select-none",
               isActive
                 ? "bg-accent/80 text-foreground shadow-sm"
                 : "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
             )}
           >
-            {isConnecting ? (
-              <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-            ) : (
-              <Database className={cn("h-3 w-3 shrink-0", isFailed && "text-destructive")} />
-            )}
-            <span>{label}</span>
             <button
               onClick={(e) => {
                 e.stopPropagation();
                 closeDatabaseTab(pid);
               }}
-              className="opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive rounded-md p-0.5 group-hover:opacity-100"
+              className="absolute right-0.5 top-0.5 shrink-0 opacity-0 transition-all hover:bg-destructive/20 hover:text-destructive rounded-md p-0.5 group-hover:opacity-100"
             >
-              <X className="h-3 w-3" />
+              <X className="h-2.5 w-2.5" />
             </button>
+            {isConnecting ? (
+              <Loader2 className="h-5 w-5 shrink-0 animate-spin" />
+            ) : (
+              <Database className={cn("h-5 w-5 shrink-0", isFailed && "text-destructive")} />
+            )}
+            <span className="line-clamp-2 w-full break-words text-center font-mono text-[9px] leading-tight">
+              {label}
+            </span>
           </div>
         );
       })}

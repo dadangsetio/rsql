@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Toaster } from "sonner";
 import { CommandPalette } from "@/components/command-palette";
 import { ConnectionModal } from "@/components/connection-modal";
@@ -10,8 +10,10 @@ import { EnumsPanel } from "@/components/enums-panel";
 import { ERDDiagram } from "@/components/erd-diagram";
 import { ExtensionsPanel } from "@/components/extensions-panel";
 import { NotifyPanel } from "@/components/notify-panel";
+import { ObjectPropertiesPanel } from "@/components/object-properties-modal";
 import { PerformanceMonitor } from "@/components/performance-monitor";
 import { PgSettingsPanel } from "@/components/pg-settings-panel";
+import type { QueryEditorHandle } from "@/components/query-editor";
 import { QueryEditor } from "@/components/query-editor";
 import { ResizeHandle } from "@/components/resize-handle";
 import { ResultsGrid } from "@/components/results-grid";
@@ -70,11 +72,16 @@ export default function App() {
     details: ProjectDetails;
   } | null>(null);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const editorRef = useRef<QueryEditorHandle>(null);
 
   useAppStartup();
   const { runQuery, runExplain, cancelQuery, runSplitQuery } = useQueryLifecycle({
     setCommandPaletteOpen,
   });
+  const executeCurrent = useCallback(
+    () => void runQuery(editorRef.current?.getQueriesToRun()),
+    [runQuery],
+  );
 
   const handleSaveConnection = useCallback(
     async (connection: {
@@ -255,10 +262,23 @@ export default function App() {
             <div className="flex-1 min-h-0 overflow-hidden">
               <PgSettingsPanel projectId={activeTab.projectId} />
             </div>
+          ) : activeTab?.type === "query" &&
+            activeTab.showProperties &&
+            activeTab.propertiesTarget &&
+            activeTab.projectId ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <ObjectPropertiesPanel
+                projectId={activeTab.projectId}
+                schema={activeTab.propertiesTarget.schema}
+                name={activeTab.propertiesTarget.name}
+                objectType={activeTab.propertiesTarget.objectType}
+                onClose={() => useTabStore.getState().setShowProperties(activeTab.id, false)}
+              />
+            </div>
           ) : activeTab?.isSplit ? (
             <>
               <EditorToolbar
-                onExecute={() => void runQuery()}
+                onExecute={executeCurrent}
                 onExplain={() => void runExplain()}
                 onCancel={() => void cancelQuery()}
               />
@@ -270,9 +290,10 @@ export default function App() {
                     className="flex flex-col overflow-hidden"
                   >
                     <QueryEditor
+                      ref={editorRef}
                       value={activeTab.editorValue}
                       onChange={(v) => activeTabId && updateContent(activeTabId, v)}
-                      onExecute={() => void runQuery()}
+                      onExecute={(blocks) => void runQuery(blocks)}
                       onExplain={() => void runExplain()}
                     />
                   </div>
@@ -349,15 +370,16 @@ export default function App() {
                     className={`min-h-0 min-w-0 flex flex-col overflow-hidden ${editorCollapsed ? "flex-shrink-0" : "flex-1"}`}
                   >
                     <EditorToolbar
-                      onExecute={() => void runQuery()}
+                      onExecute={executeCurrent}
                       onExplain={() => void runExplain()}
                       onCancel={() => void cancelQuery()}
                     />
                     {!editorCollapsed && (
                       <QueryEditor
+                        ref={editorRef}
                         value={activeTab?.editorValue ?? ""}
                         onChange={(v) => activeTabId && updateContent(activeTabId, v)}
-                        onExecute={() => void runQuery()}
+                        onExecute={(blocks) => void runQuery(blocks)}
                         onExplain={() => void runExplain()}
                       />
                     )}
@@ -400,7 +422,7 @@ export default function App() {
       <CommandPalette
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
-        onExecute={() => void runQuery()}
+        onExecute={executeCurrent}
         onExplain={() => void runExplain()}
         onCheckUpdates={() => void checkForUpdates()}
       />

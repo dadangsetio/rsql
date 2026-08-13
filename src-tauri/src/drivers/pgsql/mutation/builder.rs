@@ -180,6 +180,36 @@ mod tests {
         Some(value.to_string())
     }
 
+    /// Regression guard, not a micro-benchmark: catches an accidental O(n^2) in
+    /// statement building (e.g. a linear scan added to `column_type` or
+    /// `build_key_predicates`) rather than tracking exact timings. The threshold
+    /// is generous on purpose so ordinary machine/CI jitter never trips it.
+    #[test]
+    fn building_many_update_statements_stays_fast() {
+        let mutation = RowMutation {
+            kind: MutationKind::Update,
+            set: vec![
+                ("name".into(), cell("ada")),
+                ("note".into(), cell("lovelace")),
+            ],
+            pk: vec![("id".into(), cell("7"))],
+        };
+        let types = types();
+
+        let start = std::time::Instant::now();
+        for _ in 0..10_000 {
+            build_statement("public", "t", &mutation, &types).unwrap();
+        }
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed.as_millis() < 500,
+            "building 10,000 UPDATE statements took {:?}, expected well under 500ms — \
+             check for an accidentally quadratic path in build_statement",
+            elapsed
+        );
+    }
+
     #[test]
     fn delete_casts_the_key_parameter_to_the_column_type() {
         let mutation = RowMutation {

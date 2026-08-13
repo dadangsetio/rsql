@@ -249,4 +249,28 @@ mod tests {
     fn an_empty_accumulator_reports_empty() {
         assert_eq!(PageAccumulator::default().total_rows, 0);
     }
+
+    /// Regression guard, not a micro-benchmark: catches an accidental O(n^2) in
+    /// page packing (e.g. `current.push_str` becoming a full-page copy, or the
+    /// capacity estimate no longer being honored) on the path every large SELECT
+    /// result goes through. The threshold is generous on purpose so ordinary
+    /// machine/CI jitter never trips it.
+    #[test]
+    fn packing_a_large_result_set_stays_fast() {
+        let rows: Vec<Vec<Option<&str>>> = (0..100_000)
+            .map(|i| vec![Some("alice"), Some("alice@example.com"), if i % 7 == 0 { None } else { Some("42") }])
+            .collect();
+
+        let start = std::time::Instant::now();
+        let accum = accumulate(&rows, 1_000);
+        let elapsed = start.elapsed();
+
+        assert_eq!(accum.total_rows, 100_000);
+        assert!(
+            elapsed.as_millis() < 1_000,
+            "packing 100,000 rows took {:?}, expected well under 1s — \
+             check for an accidentally quadratic path in PageAccumulator::push",
+            elapsed
+        );
+    }
 }

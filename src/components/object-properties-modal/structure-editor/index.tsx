@@ -27,7 +27,7 @@ export function StructureEditorContent({
   getDriver,
   onApplied,
   openTab,
-  onOpenChange,
+  onClose,
 }: {
   projectId: string;
   schema: string;
@@ -39,7 +39,7 @@ export function StructureEditorContent({
   getDriver: () => ReturnType<typeof DriverFactory.getDriver> | null;
   onApplied: () => void;
   openTab: (projectId?: string, sql?: string) => void;
-  onOpenChange: (open: boolean) => void;
+  onClose: () => void;
 }) {
   const [subTab, setSubTab] = useState<StructureSubTab>("columns");
   const [applying, setApplying] = useState(false);
@@ -187,7 +187,7 @@ export function StructureEditorContent({
                 className="h-6 gap-1 text-[10px] px-2 text-muted-foreground hover:text-foreground"
                 onClick={() => {
                   openTab(projectId, sqlPreview);
-                  onOpenChange(false);
+                  onClose();
                 }}
               >
                 <Play className="h-2.5 w-2.5" /> Open in Tab

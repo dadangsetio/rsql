@@ -47,6 +47,9 @@ export function ResultsPanel() {
   const result = activeTab?.result;
   const isExecuting = activeTab?.isExecuting;
   const vq = activeTab?.virtualQuery;
+  const groupResults = activeTab?.results;
+  const activeResultIndex = activeTab?.activeResultIndex ?? 0;
+  const selectResult = useTabStore((s) => s.selectResult);
 
   const handleCancel = useCallback(async () => {
     if (!activeTab?.projectId || !activeTab.isExecuting || !activeTab.execId) return;
@@ -339,6 +342,28 @@ export function ResultsPanel() {
         filteredRows={filteredRows}
         filteredCount={filteredRows.length}
       />
+      {groupResults && groupResults.length > 1 && activeTab && (
+        <div className="flex items-center gap-1 border-b border-border/30 bg-muted/20 px-2 py-1 overflow-x-auto">
+          {groupResults.map((r, i) => (
+            <button
+              key={`${i}-${r.sql}`}
+              type="button"
+              onClick={() => selectResult(activeTab.id, i)}
+              className={`shrink-0 rounded px-2 py-0.5 text-xs font-mono transition-colors ${
+                i === activeResultIndex
+                  ? r.error
+                    ? "bg-destructive/15 text-destructive"
+                    : "bg-primary/15 text-primary"
+                  : "text-muted-foreground hover:bg-muted/50"
+              }`}
+              title={r.sql?.trim()}
+            >
+              Query {i + 1}
+              {r.error ? " ✗" : ` · ${r.rows.length}`}
+            </button>
+          ))}
+        </div>
+      )}
       {filterState.open && (
         <FilterBar
           state={filterState}

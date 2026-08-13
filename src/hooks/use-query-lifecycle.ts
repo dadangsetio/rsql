@@ -27,6 +27,7 @@ function logQuerySuccess(database: string, rowCount: number, elapsed: number, sq
 
 export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleArgs) {
   const updateResult = useTabStore((s) => s.updateResult);
+  const appendResult = useTabStore((s) => s.appendResult);
   const setExecuting = useTabStore((s) => s.setExecuting);
   const closeTab = useTabStore((s) => s.closeTab);
   const setExplainResult = useTabStore((s) => s.setExplainResult);
@@ -36,164 +37,248 @@ export function useQueryLifecycle({ setCommandPaletteOpen }: UseQueryLifecycleAr
   const addHistoryEntry = useHistoryStore((s) => s.addEntry);
   const connectProject = useProjectStore((s) => s.connect);
 
-  const runQuery = useCallback(async () => {
-    const { tabs, selectedTabIndex } = useTabStore.getState();
-    const tab = tabs[selectedTabIndex];
-    if (!tab?.projectId || !tab.editorValue.trim()) return;
+  const runQuery = useCallback(
+    async (sqlBlocks?: string[]) => {
+      const { tabs, selectedTabIndex } = useTabStore.getState();
+      const tab = tabs[selectedTabIndex];
+      if (!tab?.projectId) return;
 
-    // Captured before the first await: the tab may move or close while the
-    // query runs, and an index would then address someone else's tab.
-    const tabId = tab.id;
+      // Captured before the first await: the tab may move or close while the
+      // query runs, and an index would then address someone else's tab.
+      const tabId = tab.id;
 
-    const d = useProjectStore.getState().projects[tab.projectId];
-    if (!d) return;
+      const blocks = (sqlBlocks && sqlBlocks.length > 0 ? sqlBlocks : [tab.editorValue]).filter(
+        (b) => b.trim(),
+      );
+      if (blocks.length === 0) return;
 
-    const connStatus = useProjectStore.getState().status[tab.projectId];
-    if (connStatus !== "Connected") {
-      await connectProject(tab.projectId);
-      const newStatus = useProjectStore.getState().status[tab.projectId];
-      if (newStatus !== "Connected") return;
-    }
+      const d = useProjectStore.getState().projects[tab.projectId];
+      if (!d) return;
 
-    const execId = crypto.randomUUID();
-    setExecuting(tabId, true, execId);
-    const startTime = Date.now();
-    try {
-      const driver = DriverFactory.getDriver(d.driver);
-
-      const prevVQ = tab.virtualQuery;
-      if (prevVQ?.queryId) {
-        await driver.closeVirtual?.(tab.projectId, prevVQ.queryId).catch(() => {});
-        virtualCache.clearQuery(prevVQ.queryId);
-        setVirtualQuery(tabId, undefined);
+      const connStatus = useProjectStore.getState().status[tab.projectId];
+      if (connStatus !== "Connected") {
+        await connectProject(tab.projectId);
+        const newStatus = useProjectStore.getState().status[tab.projectId];
+        if (newStatus !== "Connected") return;
       }
 
-      const timeoutMs = tab.queryTimeout || undefined;
+      // Several query groups (e.g. a selection spanning multiple blank-line
+      // separated blocks): run each sequentially, one result per group, and
+      // stop at the first failure rather than run later statements against
+      // possibly half-applied state.
+      // ponytail: no virtual/paged results here — a script-runner batch isn't
+      // the place for the paged-grid machinery. Add it if a group in a batch
+      // turns out to return huge result sets.
+      if (blocks.length > 1) {
+        const execId = crypto.randomUUID();
+        setExecuting(tabId, true, execId);
+        const driver = DriverFactory.getDriver(d.driver);
+        const timeoutMs = tab.queryTimeout || undefined;
+        let hasResult = false;
+        for (const sql of blocks) {
+          const startTime = Date.now();
+          try {
+            const [cols, rows, time] = await driver.runQuery(tab.projectId, sql, timeoutMs, execId);
+            const result = { columns: cols, rows, time, sql };
+            if (hasResult) appendResult(tabId, result);
+            else {
+              updateResult(tabId, result);
+              hasResult = true;
+            }
+            notifyQueryComplete(sql, time, true, rows.length);
+            addHistoryEntry({
+              projectId: tab.projectId,
+              database: d.database,
+              sql: sql.trim(),
+              executionTime: time,
+              rowCount: rows.length,
+              success: true,
+              timestamp: startTime,
+            });
+            logQuerySuccess(d.database, rows.length, time, sql);
+          } catch (err: any) {
+            const elapsed = Date.now() - startTime;
+            const errorMsg = err?.message ?? String(err);
+            const cancelled = isQueryCancelledError(errorMsg);
+            const errorResult = {
+              columns: [cancelled ? "Info" : "Error"],
+              rows: [[cancelled ? "Query cancelled" : errorMsg]],
+              time: 0,
+              sql,
+              error: true,
+            };
+            if (hasResult) appendResult(tabId, errorResult);
+            else {
+              updateResult(tabId, errorResult);
+              hasResult = true;
+            }
+            if (!cancelled) notifyQueryComplete(sql, elapsed, false);
+            addHistoryEntry({
+              projectId: tab.projectId,
+              database: d.database,
+              sql: sql.trim(),
+              executionTime: elapsed,
+              rowCount: 0,
+              success: false,
+              error: cancelled ? "Query cancelled" : errorMsg,
+              timestamp: startTime,
+            });
+            if (!cancelled) {
+              useActivityStore
+                .getState()
+                .log(
+                  "error",
+                  `Query failed on ${d.database}: ${errorMsg}`,
+                  `SQL:\n${sql.trim()}\n\nError:\n${errorMsg}`,
+                );
+            }
+            break;
+          }
+        }
+        setExecuting(tabId, false);
+        if (blocks.some((b) => changesSchema(b))) {
+          useSchemaIndexStore.getState().invalidateProject(tab.projectId);
+        }
+        useUIStore.getState().setSelectedRow(0);
+        return;
+      }
 
-      if (driver.executeVirtual) {
-        const sql = tab.editorValue;
-        const queryId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-        const [colsPacked, totalRows, pagePacked, elapsed, capped] = await driver.executeVirtual(
-          tab.projectId,
-          sql,
-          queryId,
-          PAGE_SIZE,
-          timeoutMs,
-          execId,
-        );
+      const sql = blocks[0];
+      const execId = crypto.randomUUID();
+      setExecuting(tabId, true, execId);
+      const startTime = Date.now();
+      try {
+        const driver = DriverFactory.getDriver(d.driver);
 
-        if (!colsPacked) {
-          const { columns, rows } = decodeResult(pagePacked);
+        const prevVQ = tab.virtualQuery;
+        if (prevVQ?.queryId) {
+          await driver.closeVirtual?.(tab.projectId, prevVQ.queryId).catch(() => {});
+          virtualCache.clearQuery(prevVQ.queryId);
+          setVirtualQuery(tabId, undefined);
+        }
 
-          await driver.closeVirtual?.(tab.projectId, queryId).catch(() => {});
-          updateResult(tabId, { columns, rows, time: elapsed });
-          notifyQueryComplete(tab.editorValue, elapsed, true, rows.length);
+        const timeoutMs = tab.queryTimeout || undefined;
 
+        if (driver.executeVirtual) {
+          const queryId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+          const [colsPacked, totalRows, pagePacked, elapsed, capped] = await driver.executeVirtual(
+            tab.projectId,
+            sql,
+            queryId,
+            PAGE_SIZE,
+            timeoutMs,
+            execId,
+          );
+
+          if (!colsPacked) {
+            const { columns, rows } = decodeResult(pagePacked);
+
+            await driver.closeVirtual?.(tab.projectId, queryId).catch(() => {});
+            updateResult(tabId, { columns, rows, time: elapsed });
+            notifyQueryComplete(sql, elapsed, true, rows.length);
+
+            addHistoryEntry({
+              projectId: tab.projectId,
+              database: d.database,
+              sql: sql.trim(),
+              executionTime: elapsed,
+              rowCount: rows.length,
+              success: true,
+              timestamp: startTime,
+            });
+            logQuerySuccess(d.database, rows.length, elapsed, sql);
+          } else {
+            const columns = decodeColumns(colsPacked);
+            const firstPage = decodePage(pagePacked);
+
+            if (totalRows <= PAGE_SIZE) {
+              await driver.closeVirtual?.(tab.projectId, queryId).catch(() => {});
+              updateResult(tabId, { columns, rows: firstPage, time: elapsed, capped });
+              notifyQueryComplete(sql, elapsed, true, firstPage.length);
+            } else {
+              virtualCache.setPage(queryId, 0, firstPage);
+              setVirtualQuery(tabId, {
+                queryId,
+                columns,
+                totalRows,
+                pageSize: PAGE_SIZE,
+                colCount: columns.length,
+                time: elapsed,
+              });
+              updateResult(tabId, { columns, rows: firstPage, time: elapsed, capped });
+              notifyQueryComplete(sql, elapsed, true, totalRows);
+            }
+
+            addHistoryEntry({
+              projectId: tab.projectId,
+              database: d.database,
+              sql: sql.trim(),
+              executionTime: elapsed,
+              rowCount: totalRows > PAGE_SIZE ? totalRows : firstPage.length,
+              success: true,
+              timestamp: startTime,
+            });
+            logQuerySuccess(d.database, totalRows, elapsed, sql);
+          }
+        } else {
+          const [cols, rows, time] = await driver.runQuery(tab.projectId, sql, timeoutMs, execId);
+          updateResult(tabId, { columns: cols, rows, time });
+          notifyQueryComplete(sql, time, true, rows.length);
           addHistoryEntry({
             projectId: tab.projectId,
             database: d.database,
-            sql: tab.editorValue.trim(),
-            executionTime: elapsed,
+            sql: sql.trim(),
+            executionTime: time,
             rowCount: rows.length,
             success: true,
             timestamp: startTime,
           });
-          logQuerySuccess(d.database, rows.length, elapsed, tab.editorValue);
-        } else {
-          const columns = decodeColumns(colsPacked);
-          const firstPage = decodePage(pagePacked);
-
-          if (totalRows <= PAGE_SIZE) {
-            await driver.closeVirtual?.(tab.projectId, queryId).catch(() => {});
-            updateResult(tabId, { columns, rows: firstPage, time: elapsed, capped });
-            notifyQueryComplete(tab.editorValue, elapsed, true, firstPage.length);
-          } else {
-            virtualCache.setPage(queryId, 0, firstPage);
-            setVirtualQuery(tabId, {
-              queryId,
-              columns,
-              totalRows,
-              pageSize: PAGE_SIZE,
-              colCount: columns.length,
-              time: elapsed,
-            });
-            updateResult(tabId, { columns, rows: firstPage, time: elapsed, capped });
-            notifyQueryComplete(tab.editorValue, elapsed, true, totalRows);
-          }
-
-          addHistoryEntry({
-            projectId: tab.projectId,
-            database: d.database,
-            sql: tab.editorValue.trim(),
-            executionTime: elapsed,
-            rowCount: totalRows > PAGE_SIZE ? totalRows : firstPage.length,
-            success: true,
-            timestamp: startTime,
-          });
-          logQuerySuccess(d.database, totalRows, elapsed, tab.editorValue);
+          logQuerySuccess(d.database, rows.length, time, sql);
         }
-      } else {
-        const [cols, rows, time] = await driver.runQuery(
-          tab.projectId,
-          tab.editorValue,
-          timeoutMs,
-          execId,
-        );
-        updateResult(tabId, { columns: cols, rows, time });
-        notifyQueryComplete(tab.editorValue, time, true, rows.length);
+      } catch (err: any) {
+        const elapsed = Date.now() - startTime;
+        const errorMsg = err?.message ?? String(err);
+        const cancelled = isQueryCancelledError(errorMsg);
+        updateResult(tabId, {
+          columns: [cancelled ? "Info" : "Error"],
+          rows: [[cancelled ? "Query cancelled" : errorMsg]],
+          time: 0,
+        });
+        if (!cancelled) {
+          notifyQueryComplete(sql, elapsed, false);
+        }
         addHistoryEntry({
           projectId: tab.projectId,
           database: d.database,
-          sql: tab.editorValue.trim(),
-          executionTime: time,
-          rowCount: rows.length,
-          success: true,
+          sql: sql.trim(),
+          executionTime: elapsed,
+          rowCount: 0,
+          success: false,
+          error: cancelled ? "Query cancelled" : errorMsg,
           timestamp: startTime,
         });
-        logQuerySuccess(d.database, rows.length, time, tab.editorValue);
+        if (!cancelled) {
+          useActivityStore
+            .getState()
+            .log(
+              "error",
+              `Query failed on ${d.database}: ${errorMsg}`,
+              `SQL:\n${sql.trim()}\n\nError:\n${errorMsg}`,
+            );
+        }
+      } finally {
+        // Without this a failure inside the error path would leave the tab
+        // spinning on "Executing query..." with no way back.
+        setExecuting(tabId, false);
+        // A DDL statement can have added or dropped what completion offers.
+        if (changesSchema(sql)) {
+          useSchemaIndexStore.getState().invalidateProject(tab.projectId);
+        }
       }
-    } catch (err: any) {
-      const elapsed = Date.now() - startTime;
-      const errorMsg = err?.message ?? String(err);
-      const cancelled = isQueryCancelledError(errorMsg);
-      updateResult(tabId, {
-        columns: [cancelled ? "Info" : "Error"],
-        rows: [[cancelled ? "Query cancelled" : errorMsg]],
-        time: 0,
-      });
-      if (!cancelled) {
-        notifyQueryComplete(tab.editorValue, elapsed, false);
-      }
-      addHistoryEntry({
-        projectId: tab.projectId,
-        database: d.database,
-        sql: tab.editorValue.trim(),
-        executionTime: elapsed,
-        rowCount: 0,
-        success: false,
-        error: cancelled ? "Query cancelled" : errorMsg,
-        timestamp: startTime,
-      });
-      if (!cancelled) {
-        useActivityStore
-          .getState()
-          .log(
-            "error",
-            `Query failed on ${d.database}: ${errorMsg}`,
-            `SQL:\n${tab.editorValue.trim()}\n\nError:\n${errorMsg}`,
-          );
-      }
-    } finally {
-      // Without this a failure inside the error path would leave the tab
-      // spinning on "Executing query..." with no way back.
-      setExecuting(tabId, false);
-      // A DDL statement can have added or dropped what completion offers.
-      if (changesSchema(tab.editorValue)) {
-        useSchemaIndexStore.getState().invalidateProject(tab.projectId);
-      }
-    }
-    useUIStore.getState().setSelectedRow(0);
-  }, [setExecuting, updateResult, setVirtualQuery, addHistoryEntry, connectProject]);
+      useUIStore.getState().setSelectedRow(0);
+    },
+    [setExecuting, updateResult, appendResult, setVirtualQuery, addHistoryEntry, connectProject],
+  );
 
   const runExplain = useCallback(async () => {
     const { tabs, selectedTabIndex } = useTabStore.getState();

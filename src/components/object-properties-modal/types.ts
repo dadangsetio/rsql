@@ -2,9 +2,10 @@ export type ObjectType = "table" | "view" | "matview" | "function" | "trigger-fu
 
 export type Tab = "overview" | "columns" | "indexes" | "fkeys" | "ddl" | "actions" | "structure";
 
-export interface ObjectPropertiesModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+export interface ObjectPropertiesPanelProps {
+  /** Called to flip the owning tab back to its data/DDL view (e.g. after opening the DDL
+   *  in a new tab, or applying a structure change). */
+  onClose: () => void;
   objectType: ObjectType;
   projectId: string;
   schema: string;

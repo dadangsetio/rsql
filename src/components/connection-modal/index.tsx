@@ -168,7 +168,7 @@ export function ConnectionModal({ open, onOpenChange, onSave, editData }: Connec
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card border-border/50 rounded-xl sm:max-w-[500px]">
+      <DialogContent className="bg-card border-border/50 rounded-xl sm:max-w-[640px]">
         <DialogHeader>
           <DialogTitle className="font-mono text-foreground">
             {isEditing ? "Edit Connection" : "New Connection"}
@@ -186,12 +186,13 @@ export function ConnectionModal({ open, onOpenChange, onSave, editData }: Connec
             />
           )}
 
-          <DriverDisplay driver={formData.driver} />
-
-          <NameField
-            value={formData.name}
-            onChange={(value) => setFormData({ ...formData, name: value })}
-          />
+          <div className="grid grid-cols-2 gap-4">
+            <DriverDisplay driver={formData.driver} />
+            <NameField
+              value={formData.name}
+              onChange={(value) => setFormData({ ...formData, name: value })}
+            />
+          </div>
 
           <HostPortFields
             host={formData.host}
@@ -200,25 +201,27 @@ export function ConnectionModal({ open, onOpenChange, onSave, editData }: Connec
             onPortChange={(value) => setFormData({ ...formData, port: value })}
           />
 
-          <DatabaseField
-            value={formData.database}
-            onChange={(value) => setFormData({ ...formData, database: value })}
-          />
+          <div className="grid grid-cols-2 gap-4">
+            <DatabaseField
+              value={formData.database}
+              onChange={(value) => setFormData({ ...formData, database: value })}
+            />
+            <UsernameField
+              value={formData.username}
+              onChange={(value) => setFormData({ ...formData, username: value })}
+            />
+          </div>
 
-          <UsernameField
-            value={formData.username}
-            onChange={(value) => setFormData({ ...formData, username: value })}
-          />
-
-          <PasswordField
-            value={formData.password}
-            onChange={(value) => setFormData({ ...formData, password: value })}
-          />
-
-          <SslCheckbox
-            checked={formData.ssl}
-            onChange={(checked) => setFormData({ ...formData, ssl: checked })}
-          />
+          <div className="grid grid-cols-2 gap-4 items-end">
+            <PasswordField
+              value={formData.password}
+              onChange={(value) => setFormData({ ...formData, password: value })}
+            />
+            <SslCheckbox
+              checked={formData.ssl}
+              onChange={(checked) => setFormData({ ...formData, ssl: checked })}
+            />
+          </div>
 
           <SshConfig
             enabled={formData.sshEnabled}

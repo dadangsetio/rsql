@@ -2,6 +2,14 @@ use tokio_postgres::{Client, SimpleQueryMessage};
 
 use crate::common::enums::{AppError, query_failed};
 
+/// Escapes a value for safe interpolation into a single-quoted SQL string
+/// literal. `simple_query` has no parameter binding, so doubling embedded
+/// single quotes is the only defense against a schema/table/view/function
+/// name that itself contains one (a legal, if unusual, Postgres identifier).
+fn sql_literal(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
 pub async fn generate_full_ddl(
     client: &Client,
     schema: &str,
@@ -25,6 +33,12 @@ async fn generate_table_ddl(
     schema: &str,
     table: &str,
 ) -> Result<String, AppError> {
+    // simple_query has no parameter binding — escape schema/table for the SQL
+    // string-literal context they're used in below. The unescaped originals are
+    // still used for the cosmetic DDL header text, which is never sent to the DB.
+    let schema_lit = sql_literal(schema);
+    let table_lit = sql_literal(table);
+
     // Use simple_query so we can handle the complex CTE in one shot
     let sql = format!(
         r#"WITH col_ddl AS (
@@ -39,7 +53,7 @@ async fn generate_table_ddl(
     CASE WHEN is_nullable = 'NO' THEN ' NOT NULL' ELSE '' END ||
     CASE WHEN column_default IS NOT NULL THEN ' DEFAULT ' || column_default ELSE '' END AS col_def
   FROM information_schema.columns
-  WHERE table_schema = '{schema}' AND table_name = '{table}'
+  WHERE table_schema = '{schema_lit}' AND table_name = '{table_lit}'
 )
 SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
     );
@@ -68,11 +82,11 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
     }
 
     let con_sql = format!(
-        r#"SELECT 'ALTER TABLE "{schema}"."{table}" ADD CONSTRAINT "' || con.conname || '" ' || pg_get_constraintdef(con.oid) || ';'
+        r#"SELECT 'ALTER TABLE "{schema_lit}"."{table_lit}" ADD CONSTRAINT "' || con.conname || '" ' || pg_get_constraintdef(con.oid) || ';'
            FROM pg_constraint con
            JOIN pg_class c ON c.oid = con.conrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = '{schema}' AND c.relname = '{table}'
+           WHERE n.nspname = '{schema_lit}' AND c.relname = '{table_lit}'
            ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END"#
     );
     let con_result = client.simple_query(&con_sql).await.map_err(query_failed)?;
@@ -87,7 +101,7 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
            FROM pg_index i
            JOIN pg_class tbl ON tbl.oid = i.indrelid
            JOIN pg_namespace n ON n.oid = tbl.relnamespace
-           WHERE n.nspname = '{schema}' AND tbl.relname = '{table}'
+           WHERE n.nspname = '{schema_lit}' AND tbl.relname = '{table_lit}'
              AND NOT i.indisprimary
              AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = i.indexrelid)"#
     );
@@ -103,7 +117,7 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
            FROM pg_trigger t
            JOIN pg_class c ON c.oid = t.tgrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = '{schema}' AND c.relname = '{table}'
+           WHERE n.nspname = '{schema_lit}' AND c.relname = '{table_lit}'
              AND NOT t.tgisinternal"#
     );
     let trig_result = client.simple_query(&trig_sql).await.map_err(query_failed)?;
@@ -114,10 +128,10 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
     }
 
     let rls_sql = format!(
-        r#"SELECT CASE WHEN c.relrowsecurity THEN 'ALTER TABLE "{schema}"."{table}" ENABLE ROW LEVEL SECURITY;' ELSE '' END
+        r#"SELECT CASE WHEN c.relrowsecurity THEN 'ALTER TABLE "{schema_lit}"."{table_lit}" ENABLE ROW LEVEL SECURITY;' ELSE '' END
            FROM pg_class c
            JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = '{schema}' AND c.relname = '{table}'"#
+           WHERE n.nspname = '{schema_lit}' AND c.relname = '{table_lit}'"#
     );
     let rls_result = client.simple_query(&rls_sql).await.map_err(query_failed)?;
     for line in collect_lines(&rls_result) {
@@ -127,7 +141,7 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
     }
 
     let pol_sql = format!(
-        r#"SELECT 'CREATE POLICY "' || pol.polname || '" ON "{schema}"."{table}"' ||
+        r#"SELECT 'CREATE POLICY "' || pol.polname || '" ON "{schema_lit}"."{table_lit}"' ||
              CASE pol.polcmd WHEN 'r' THEN ' FOR SELECT' WHEN 'a' THEN ' FOR INSERT' WHEN 'w' THEN ' FOR UPDATE' WHEN 'd' THEN ' FOR DELETE' WHEN '*' THEN '' END ||
              CASE WHEN pol.polpermissive THEN ' AS PERMISSIVE' ELSE ' AS RESTRICTIVE' END ||
              COALESCE(E'\n  USING (' || pg_get_expr(pol.polqual, pol.polrelid) || ')', '') ||
@@ -136,7 +150,7 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
            FROM pg_policy pol
            JOIN pg_class c ON c.oid = pol.polrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = '{schema}' AND c.relname = '{table}'"#
+           WHERE n.nspname = '{schema_lit}' AND c.relname = '{table_lit}'"#
     );
     let pol_result = client.simple_query(&pol_sql).await.map_err(query_failed)?;
     for line in collect_lines(&pol_result) {
@@ -146,11 +160,11 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
     }
 
     let cmt_sql = format!(
-        r#"SELECT 'COMMENT ON TABLE "{schema}"."{table}" IS ' || quote_literal(d.description) || ';'
+        r#"SELECT 'COMMENT ON TABLE "{schema_lit}"."{table_lit}" IS ' || quote_literal(d.description) || ';'
            FROM pg_description d
            JOIN pg_class c ON c.oid = d.objoid
            JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname = '{schema}' AND c.relname = '{table}' AND d.objsubid = 0"#
+           WHERE n.nspname = '{schema_lit}' AND c.relname = '{table_lit}' AND d.objsubid = 0"#
     );
     let cmt_result = client.simple_query(&cmt_sql).await.map_err(query_failed)?;
     for line in collect_lines(&cmt_result) {
@@ -160,12 +174,12 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
     }
 
     let col_cmt_sql = format!(
-        r#"SELECT 'COMMENT ON COLUMN "{schema}"."{table}"."' || a.attname || '" IS ' || quote_literal(d.description) || ';'
+        r#"SELECT 'COMMENT ON COLUMN "{schema_lit}"."{table_lit}"."' || a.attname || '" IS ' || quote_literal(d.description) || ';'
            FROM pg_description d
            JOIN pg_class c ON c.oid = d.objoid
            JOIN pg_namespace n ON n.oid = c.relnamespace
            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = d.objsubid
-           WHERE n.nspname = '{schema}' AND c.relname = '{table}' AND d.objsubid > 0
+           WHERE n.nspname = '{schema_lit}' AND c.relname = '{table_lit}' AND d.objsubid > 0
            ORDER BY d.objsubid"#
     );
     let col_cmt_result = client
@@ -181,8 +195,10 @@ SELECT string_agg(col_def, E',\n' ORDER BY ordinal_position) FROM col_ddl"#
 }
 
 async fn generate_view_ddl(client: &Client, schema: &str, view: &str) -> Result<String, AppError> {
+    let schema_lit = sql_literal(schema);
+    let view_lit = sql_literal(view);
     let sql = format!(
-        r#"SELECT 'CREATE OR REPLACE VIEW "{schema}"."{view}" AS' || E'\n' || pg_get_viewdef('"{schema}"."{view}"'::regclass, true) || ';'"#
+        r#"SELECT 'CREATE OR REPLACE VIEW "{schema_lit}"."{view_lit}" AS' || E'\n' || pg_get_viewdef('"{schema_lit}"."{view_lit}"'::regclass, true) || ';'"#
     );
     let result = client.simple_query(&sql).await.map_err(query_failed)?;
     for msg in &result {
@@ -198,10 +214,12 @@ async fn generate_matview_ddl(
     schema: &str,
     matview: &str,
 ) -> Result<String, AppError> {
+    let schema_lit = sql_literal(schema);
+    let matview_lit = sql_literal(matview);
     let sql = format!(
-        r#"SELECT 'CREATE MATERIALIZED VIEW "{schema}"."{matview}" AS' || E'\n' || definition
+        r#"SELECT 'CREATE MATERIALIZED VIEW "{schema_lit}"."{matview_lit}" AS' || E'\n' || definition
            FROM pg_matviews
-           WHERE schemaname = '{schema}' AND matviewname = '{matview}'"#
+           WHERE schemaname = '{schema_lit}' AND matviewname = '{matview_lit}'"#
     );
     let result = client.simple_query(&sql).await.map_err(query_failed)?;
 
@@ -217,7 +235,7 @@ async fn generate_matview_ddl(
            FROM pg_index i
            JOIN pg_class tbl ON tbl.oid = i.indrelid
            JOIN pg_namespace n ON n.oid = tbl.relnamespace
-           WHERE n.nspname = '{schema}' AND tbl.relname = '{matview}'"#
+           WHERE n.nspname = '{schema_lit}' AND tbl.relname = '{matview_lit}'"#
     );
     let idx_result = client.simple_query(&idx_sql).await.map_err(query_failed)?;
     for msg in &idx_result {
@@ -237,11 +255,13 @@ async fn generate_function_ddl(
     schema: &str,
     func_name: &str,
 ) -> Result<String, AppError> {
+    let schema_lit = sql_literal(schema);
+    let func_name_lit = sql_literal(func_name);
     let sql = format!(
         r#"SELECT pg_get_functiondef(p.oid)
            FROM pg_proc p
            JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE n.nspname = '{schema}' AND p.proname = '{func_name}'
+           WHERE n.nspname = '{schema_lit}' AND p.proname = '{func_name_lit}'
            LIMIT 1"#
     );
     let result = client.simple_query(&sql).await.map_err(query_failed)?;
@@ -251,4 +271,30 @@ async fn generate_function_ddl(
         }
     }
     Ok(String::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_name_is_unchanged() {
+        assert_eq!(sql_literal("public"), "public");
+    }
+
+    #[test]
+    fn an_embedded_single_quote_is_doubled_rather_than_breaking_out_of_the_literal() {
+        // A table named exactly this is a legal, if unusual, quoted Postgres
+        // identifier. Without escaping, the lone `'` closes the SQL string
+        // literal early and lets the rest of the name execute as SQL. A doubled
+        // `''` inside a Postgres string literal parses as one literal quote
+        // character instead, so this is the correct, safe encoding.
+        let name = "orders'; DROP TABLE users; --";
+        assert_eq!(sql_literal(name), "orders''; DROP TABLE users; --");
+    }
+
+    #[test]
+    fn consecutive_quotes_are_each_doubled() {
+        assert_eq!(sql_literal("a''b"), "a''''b");
+    }
 }

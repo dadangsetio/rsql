@@ -7,13 +7,13 @@ export function ForeignKeysContent({
   incomingFKs,
   openTab,
   projectId,
-  onOpenChange,
+  onClose,
 }: {
   outgoingFKs: FKInfo[];
   incomingFKs: FKInfo[];
   openTab: (projectId?: string, sql?: string) => void;
   projectId: string;
-  onOpenChange: (open: boolean) => void;
+  onClose: () => void;
 }) {
   if (outgoingFKs.length === 0 && incomingFKs.length === 0) {
     return (
@@ -68,7 +68,7 @@ export function ForeignKeysContent({
                             projectId,
                             `SELECT * FROM "${fk.targetSchema}"."${fk.targetTable}" LIMIT 100;`,
                           );
-                          onOpenChange(false);
+                          onClose();
                         }}
                       >
                         {fk.targetSchema}.{fk.targetTable}.{fk.targetColumn}
@@ -123,7 +123,7 @@ export function ForeignKeysContent({
                             projectId,
                             `SELECT * FROM "${fk.sourceSchema}"."${fk.sourceTable}" LIMIT 100;`,
                           );
-                          onOpenChange(false);
+                          onClose();
                         }}
                       >
                         {fk.sourceSchema}.{fk.sourceTable}

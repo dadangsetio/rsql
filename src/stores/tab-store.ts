@@ -18,6 +18,36 @@ function genTabId(): string {
   return `tab-${nextId++}-${Date.now()}`;
 }
 
+/** Restored tabs must satisfy Tab's required fields even if a corrupted or
+ *  older-schema localStorage entry is missing them, otherwise unguarded
+ *  reads like `tab.editorValue.trim()` elsewhere crash on restore. */
+export function mergePersistedTabs(
+  persistedTabs: unknown[],
+  selectedTabIndex: unknown,
+): { tabs: Tab[]; selectedTabIndex: number } {
+  if (persistedTabs.length === 0) return { tabs: [], selectedTabIndex: -1 };
+  const validTabs = persistedTabs
+    .filter(
+      (t): t is Record<string, unknown> =>
+        t != null &&
+        typeof t === "object" &&
+        typeof (t as Record<string, unknown>).id === "string" &&
+        typeof (t as Record<string, unknown>).type === "string" &&
+        typeof (t as Record<string, unknown>).title === "string",
+    )
+    .map(
+      (t) =>
+        ({
+          ...t,
+          editorValue: typeof t.editorValue === "string" ? t.editorValue : "",
+          isExecuting: false,
+        }) as Tab,
+    );
+  if (validTabs.length === 0) return { tabs: [], selectedTabIndex: -1 };
+  const idx = Math.min(Math.max(0, Number(selectedTabIndex) || 0), validTabs.length - 1);
+  return { tabs: validTabs, selectedTabIndex: idx };
+}
+
 interface TabState {
   tabs: Tab[];
   selectedTabIndex: number;
@@ -41,6 +71,8 @@ interface TabState {
   selectTab: (index: number) => void;
   updateContent: (tabId: string, value: string) => void;
   updateResult: (tabId: string, result: QueryResult) => void;
+  appendResult: (tabId: string, result: QueryResult) => void;
+  selectResult: (tabId: string, index: number) => void;
   setResult: (tabId: string, result: QueryResult) => void;
   setExecuting: (tabId: string, executing: boolean, execId?: string) => void;
   setProjectId: (tabId: string, projectId: string) => void;
@@ -48,6 +80,8 @@ interface TabState {
   setVirtualQuery: (tabId: string, vq: VirtualQuery | undefined) => void;
   setFilter: (tabId: string, filter: FilterState | undefined) => void;
   setSort: (tabId: string, sort: SortState | undefined) => void;
+  setPropertiesTarget: (tabId: string, target: Tab["propertiesTarget"]) => void;
+  setShowProperties: (tabId: string, show: boolean) => void;
   toggleSplit: (tabId: string) => void;
   updateSplitContent: (tabId: string, value: string) => void;
   setSplitResult: (tabId: string, result: QueryResult) => void;
@@ -247,8 +281,30 @@ export const useTabStore = create<TabState>()(
         set((s) => {
           withTab(s, tabId, (tab) => {
             tab.result = result;
+            tab.results = [result];
+            tab.activeResultIndex = 0;
             tab.isExecuting = false;
             tab.execId = undefined;
+          });
+        }),
+      // Adds another group's result onto a run already started by updateResult,
+      // without touching isExecuting — the batch is still going.
+      appendResult: (tabId, result) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            tab.results ??= [];
+            tab.results.push(result);
+            tab.activeResultIndex = tab.results.length - 1;
+            tab.result = result;
+          });
+        }),
+      selectResult: (tabId, index) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            const r = tab.results?.[index];
+            if (!r) return;
+            tab.activeResultIndex = index;
+            tab.result = r;
           });
         }),
       setResult: (tabId, result) =>
@@ -292,6 +348,18 @@ export const useTabStore = create<TabState>()(
         set((s) => {
           withTab(s, tabId, (tab) => {
             tab.sort = sort;
+          });
+        }),
+      setPropertiesTarget: (tabId, target) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            tab.propertiesTarget = target;
+          });
+        }),
+      setShowProperties: (tabId, show) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            tab.showProperties = show;
           });
         }),
 
@@ -433,14 +501,8 @@ export const useTabStore = create<TabState>()(
       merge: (persisted: unknown, current: TabState) => {
         const p = persisted as Partial<TabState> | undefined;
         if (!p?.tabs || !Array.isArray(p.tabs)) return current;
-        if (p.tabs.length === 0) return { ...current, tabs: [], selectedTabIndex: -1 };
-        const validTabs = p.tabs.filter(
-          (t): t is Tab =>
-            t != null && typeof t === "object" && "id" in t && "type" in t && "title" in t,
-        );
-        if (validTabs.length === 0) return { ...current, tabs: [], selectedTabIndex: -1 };
-        const idx = Math.min(Math.max(0, p.selectedTabIndex ?? 0), validTabs.length - 1);
-        return { ...current, tabs: validTabs, selectedTabIndex: idx };
+        const { tabs, selectedTabIndex } = mergePersistedTabs(p.tabs, p.selectedTabIndex);
+        return { ...current, tabs, selectedTabIndex };
       },
     },
   ),

@@ -16,7 +16,7 @@ export function ActionsContent({
   runAction,
   openTab,
   projectId,
-  onOpenChange,
+  onClose,
 }: {
   objectType: ObjectType;
   schema: string;
@@ -30,7 +30,7 @@ export function ActionsContent({
   runAction: (actionLabel: string) => Promise<void>;
   openTab: (projectId?: string, sql?: string) => void;
   projectId: string;
-  onOpenChange: (open: boolean) => void;
+  onClose: () => void;
 }) {
   const qualified = `"${schema}"."${name}"`;
 
@@ -156,7 +156,7 @@ export function ActionsContent({
               className="h-7 text-xs gap-1.5"
               onClick={() => {
                 openTab(projectId, `SELECT * FROM ${qualified} LIMIT 100;`);
-                onOpenChange(false);
+                onClose();
               }}
             >
               <Play className="h-3 w-3" /> SELECT TOP 100
@@ -167,7 +167,7 @@ export function ActionsContent({
               className="h-7 text-xs gap-1.5"
               onClick={() => {
                 openTab(projectId, `SELECT COUNT(*) FROM ${qualified};`);
-                onOpenChange(false);
+                onClose();
               }}
             >
               <Play className="h-3 w-3" /> SELECT COUNT(*)
@@ -178,7 +178,7 @@ export function ActionsContent({
               className="h-7 text-xs gap-1.5"
               onClick={() => {
                 openTab(projectId, `SELECT * FROM ${qualified} ORDER BY 1 DESC LIMIT 10;`);
-                onOpenChange(false);
+                onClose();
               }}
             >
               <Play className="h-3 w-3" /> Latest 10

@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import React from "react";
 import { CSVImportModal } from "@/components/csv-import-modal";
-import { ObjectPropertiesModal } from "@/components/object-properties-modal";
 import { ContextMenu, useContextMenu } from "@/components/ui/context-menu";
 import { DriverFactory } from "@/lib/database-driver";
 import { ddlFunctionQuery, ddlTableQuery, ddlViewQuery } from "@/lib/ddl-queries";
@@ -62,20 +61,6 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
   const openNewTableTab = useTabStore((s) => s.openNewTableTab);
   const openObjectPanelTab = useTabStore((s) => s.openObjectPanelTab);
   const { menu, showMenu, closeMenu } = useContextMenu();
-
-  const [propsModal, setPropsModal] = React.useState<{
-    open: boolean;
-    objectType: "table" | "view" | "matview" | "function" | "trigger-function";
-    schema: string;
-    name: string;
-  }>({ open: false, objectType: "table", schema: "", name: "" });
-  const openProperties = (
-    objectType: typeof propsModal.objectType,
-    schema: string,
-    name: string,
-  ) => {
-    setPropsModal({ open: true, objectType, schema, name });
-  };
 
   const [csvImportTarget, setCsvImportTarget] = React.useState<{
     schema: string;
@@ -132,14 +117,21 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
   const onNewFunction = (schema: string) =>
     openObjectPanelTab(projectId, { kind: "function", schema, isProcedure: false });
 
-  const onOpenTableQuery = (schema: string, table: string) => {
+  type PropertiesObjectType = "table" | "view" | "matview" | "function" | "trigger-function";
+
+  const onOpenTableQuery = (
+    schema: string,
+    table: string,
+    objectType: "table" | "view" | "matview" = "table",
+  ) => {
     const sql = `SELECT * FROM "${schema}"."${table}" LIMIT 100;`;
     openTab(projectId, sql);
-    const d = useProjectStore.getState().projects[projectId];
-    if (!d) return;
     const tabs = useTabStore.getState().tabs;
     const newTabId = tabs[tabs.length - 1]?.id;
     if (!newTabId) return;
+    useTabStore.getState().setPropertiesTarget(newTabId, { objectType, schema, name: table });
+    const d = useProjectStore.getState().projects[projectId];
+    if (!d) return;
     useTabStore.getState().setExecuting(newTabId, true);
     const driver = DriverFactory.getDriver(d.driver);
     driver
@@ -150,6 +142,50 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
       .catch(() => {
         useTabStore.getState().setExecuting(newTabId, false);
       });
+  };
+
+  const onOpenDefinitionTab = (
+    objectType: "function" | "trigger-function",
+    schema: string,
+    name: string,
+  ) => {
+    openTab(projectId, ddlFunctionQuery(schema, name));
+    const tabs = useTabStore.getState().tabs;
+    const newTabId = tabs[tabs.length - 1]?.id;
+    if (newTabId) {
+      useTabStore.getState().setPropertiesTarget(newTabId, { objectType, schema, name });
+    }
+  };
+
+  /** Opens (or focuses) the tab for this schema object and switches it to the inline
+   *  Properties view — reusing whichever tab already shows that object's data/definition
+   *  instead of spawning a duplicate. */
+  const openPropertiesTab = (objectType: PropertiesObjectType, schema: string, name: string) => {
+    const existing = useTabStore
+      .getState()
+      .tabs.find(
+        (t) =>
+          t.projectId === projectId &&
+          t.propertiesTarget?.objectType === objectType &&
+          t.propertiesTarget?.schema === schema &&
+          t.propertiesTarget?.name === name,
+      );
+    if (existing) {
+      const index = useTabStore.getState().tabs.indexOf(existing);
+      useTabStore.getState().selectTab(index);
+      useTabStore.getState().setShowProperties(existing.id, true);
+      return;
+    }
+
+    if (objectType === "table" || objectType === "view" || objectType === "matview") {
+      onOpenTableQuery(schema, name, objectType);
+    } else {
+      onOpenDefinitionTab(objectType, schema, name);
+    }
+
+    const tabs = useTabStore.getState().tabs;
+    const newTabId = tabs[tabs.length - 1]?.id;
+    if (newTabId) useTabStore.getState().setShowProperties(newTabId, true);
   };
 
   const isConnected = status === ProjectConnectionStatus.Connected;
@@ -361,7 +397,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                 {
                                   label: "Properties",
                                   icon: <Settings2 className="h-3 w-3" />,
-                                  onClick: () => openProperties("table", schema, ti.name),
+                                  onClick: () => openPropertiesTab("table", schema, ti.name),
                                 },
                                 {
                                   label: "Show CREATE TABLE",
@@ -624,7 +660,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                               selected={selectedItem === vKey}
                               onClick={() => {
                                 setSelectedItem(vKey);
-                                onOpenTableQuery(schema, v);
+                                onOpenTableQuery(schema, v, "view");
                               }}
                               onContextMenu={(e) => {
                                 setSelectedItem(vKey);
@@ -632,7 +668,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   {
                                     label: "SELECT TOP 100",
                                     icon: <Eye className="h-3 w-3" />,
-                                    onClick: () => onOpenTableQuery(schema, v),
+                                    onClick: () => onOpenTableQuery(schema, v, "view"),
                                   },
                                   { separator: true as const },
                                   {
@@ -648,7 +684,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   {
                                     label: "Properties",
                                     icon: <Settings2 className="h-3 w-3" />,
-                                    onClick: () => openProperties("view", schema, v),
+                                    onClick: () => openPropertiesTab("view", schema, v),
                                   },
                                   {
                                     label: "Show CREATE VIEW",
@@ -691,7 +727,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                               selected={selectedItem === mvKey}
                               onClick={() => {
                                 setSelectedItem(mvKey);
-                                onOpenTableQuery(schema, mv);
+                                onOpenTableQuery(schema, mv, "matview");
                               }}
                               onContextMenu={(e) => {
                                 setSelectedItem(mvKey);
@@ -699,7 +735,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   {
                                     label: "SELECT TOP 100",
                                     icon: <Layers className="h-3 w-3" />,
-                                    onClick: () => onOpenTableQuery(schema, mv),
+                                    onClick: () => onOpenTableQuery(schema, mv, "matview"),
                                   },
                                   {
                                     label: "REFRESH",
@@ -724,7 +760,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   {
                                     label: "Properties",
                                     icon: <Settings2 className="h-3 w-3" />,
-                                    onClick: () => openProperties("matview", schema, mv),
+                                    onClick: () => openPropertiesTab("matview", schema, mv),
                                   },
                                   { separator: true as const },
                                   {
@@ -751,11 +787,14 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                         onClick={() => toggle(`${sKey}::fns`)}
                       />
                       {isOpen(`${sKey}::fns`) &&
-                        schemaFns.map((fn, i) => {
-                          const fnKey = `fn::${schema}::${fn.name}::${i}`;
+                        schemaFns.map((fn) => {
+                          // name + arguments, not array index: Postgres allows overloading
+                          // (same name, different signature), and an index-based key remounts
+                          // every row whenever the list order changes on refresh.
+                          const fnKey = `fn::${schema}::${fn.name}::${fn.arguments}`;
                           return (
                             <div
-                              key={`${fn.name}-${i}`}
+                              key={fnKey}
                               className={
                                 selectedItem === fnKey
                                   ? "relative flex items-center gap-1.5 py-0.5 rounded-sm whitespace-nowrap select-none bg-primary/10"
@@ -771,8 +810,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   {
                                     label: "Show Definition",
                                     icon: <FileCode className="h-3 w-3" />,
-                                    onClick: () =>
-                                      openTab(projectId, ddlFunctionQuery(schema, fn.name)),
+                                    onClick: () => onOpenDefinitionTab("function", schema, fn.name),
                                   },
                                   {
                                     label: "Edit",
@@ -788,7 +826,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                   {
                                     label: "Properties",
                                     icon: <Settings2 className="h-3 w-3" />,
-                                    onClick: () => openProperties("function", schema, fn.name),
+                                    onClick: () => openPropertiesTab("function", schema, fn.name),
                                   },
                                   { separator: true as const },
                                   {
@@ -823,11 +861,11 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                         onClick={() => toggle(`${sKey}::trigfns`)}
                       />
                       {isOpen(`${sKey}::trigfns`) &&
-                        schemaTrigFns.map((fn, i) => {
-                          const tfKey = `trigfn::${schema}::${fn.name}::${i}`;
+                        schemaTrigFns.map((fn) => {
+                          const tfKey = `trigfn::${schema}::${fn.name}::${fn.arguments}`;
                           return (
                             <div
-                              key={`${fn.name}-${i}`}
+                              key={tfKey}
                               className={
                                 selectedItem === tfKey
                                   ? "relative flex items-center gap-1.5 py-0.5 rounded-sm whitespace-nowrap select-none bg-primary/10"
@@ -844,13 +882,13 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
                                     label: "Show Definition",
                                     icon: <FileCode className="h-3 w-3" />,
                                     onClick: () =>
-                                      openTab(projectId, ddlFunctionQuery(schema, fn.name)),
+                                      onOpenDefinitionTab("trigger-function", schema, fn.name),
                                   },
                                   {
                                     label: "Properties",
                                     icon: <Settings2 className="h-3 w-3" />,
                                     onClick: () =>
-                                      openProperties("trigger-function", schema, fn.name),
+                                      openPropertiesTab("trigger-function", schema, fn.name),
                                   },
                                   { separator: true as const },
                                   {
@@ -880,14 +918,6 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
         })}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={closeMenu} />}
-      <ObjectPropertiesModal
-        open={propsModal.open}
-        onOpenChange={(open) => setPropsModal((p) => ({ ...p, open }))}
-        objectType={propsModal.objectType}
-        projectId={projectId}
-        schema={propsModal.schema}
-        name={propsModal.name}
-      />
       {csvImportTarget && (
         <CSVImportModal
           open={!!csvImportTarget}
