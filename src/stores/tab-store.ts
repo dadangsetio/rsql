@@ -52,7 +52,8 @@ interface TabState {
   tabs: Tab[];
   selectedTabIndex: number;
 
-  openTab: (projectId?: string, editorValue?: string) => void;
+  openTab: (projectId?: string, editorValue?: string, title?: string) => void;
+  duplicateTab: (index: number) => void;
   openMonitorTab: (projectId: string) => void;
   openERDTab: (projectId: string, schema: string) => void;
   openNewTableTab: (projectId: string, schema: string) => void;
@@ -69,6 +70,7 @@ interface TabState {
   closeAllTabs: () => void;
   closeOtherTabs: (index: number) => void;
   selectTab: (index: number) => void;
+  togglePinTab: (tabId: string) => void;
   updateContent: (tabId: string, value: string) => void;
   updateResult: (tabId: string, result: QueryResult) => void;
   appendResult: (tabId: string, result: QueryResult) => void;
@@ -160,17 +162,43 @@ export const useTabStore = create<TabState>()(
       ],
       selectedTabIndex: 0,
 
-      openTab: (projectId?: string, editorValue: string = "") => {
+      openTab: (projectId?: string, editorValue: string = "", title?: string) => {
         set((s) => {
           s.tabs.push({
             id: genTabId(),
             type: "query",
             projectId,
-            title: `Query ${s.tabs.length + 1}`,
+            title: title ?? `Query ${s.tabs.length + 1}`,
             editorValue,
             isExecuting: false,
           });
           s.selectedTabIndex = s.tabs.length - 1;
+        });
+      },
+
+      duplicateTab: (index) => {
+        set((s) => {
+          const tab = s.tabs[index];
+          if (!tab) return;
+          s.tabs.splice(index + 1, 0, {
+            ...tab,
+            id: genTabId(),
+            title: `${tab.title} (copy)`,
+            isExecuting: false,
+            execId: undefined,
+            result: undefined,
+            results: undefined,
+            activeResultIndex: undefined,
+            explainResult: undefined,
+            virtualQuery: undefined,
+            splitResult: undefined,
+            isSplitExecuting: false,
+            editSession: undefined,
+            filter: undefined,
+            sort: undefined,
+            showProperties: false,
+          });
+          s.selectedTabIndex = index + 1;
         });
       },
 
@@ -253,22 +281,31 @@ export const useTabStore = create<TabState>()(
 
       closeAllTabs: () =>
         set((s) => {
-          s.tabs = [];
-          s.selectedTabIndex = -1;
+          const kept = s.tabs.filter((t) => t.pinned);
+          s.tabs = kept;
+          s.selectedTabIndex = kept.length === 0 ? -1 : 0;
         }),
 
       closeOtherTabs: (index) => {
         set((s) => {
           const keep = s.tabs[index];
           if (!keep) return;
-          s.tabs = [keep];
-          s.selectedTabIndex = 0;
+          const kept = s.tabs.filter((t, i) => i === index || t.pinned);
+          s.tabs = kept;
+          s.selectedTabIndex = kept.findIndex((t) => t.id === keep.id);
         });
       },
 
       selectTab: (index) =>
         set((s) => {
           s.selectedTabIndex = index;
+        }),
+
+      togglePinTab: (tabId) =>
+        set((s) => {
+          withTab(s, tabId, (tab) => {
+            tab.pinned = !tab.pinned;
+          });
         }),
 
       updateContent: (tabId, value) =>
@@ -484,6 +521,7 @@ export const useTabStore = create<TabState>()(
             projectId: tab.projectId,
             schema: tab.schema,
             title: tab.title,
+            pinned: tab.pinned,
             editorValue: tab.editorValue,
             isExecuting: false,
             queryTimeout: tab.queryTimeout,

@@ -3,9 +3,12 @@ import {
   Bell,
   Columns3,
   Copy,
+  CopyPlus,
   Database,
   List,
   Package,
+  Pin,
+  PinOff,
   Plus,
   Settings,
   Shield,
@@ -31,6 +34,8 @@ export function TabBar() {
   const closeAllTabs = useTabStore((s) => s.closeAllTabs);
   const closeOtherTabs = useTabStore((s) => s.closeOtherTabs);
   const openTab = useTabStore((s) => s.openTab);
+  const duplicateTab = useTabStore((s) => s.duplicateTab);
+  const togglePinTab = useTabStore((s) => s.togglePinTab);
   const { menu, showMenu, closeMenu } = useContextMenu();
 
   const cleanupVirtual = useCallback(
@@ -48,23 +53,29 @@ export function TabBar() {
     [tabs],
   );
 
+  // Pinned tabs must be unpinned before they can be closed, so bulk/direct
+  // close actions never drop virtual query state out from under a tab that's
+  // still open.
   const handleCloseTab = useCallback(
     (idx: number) => {
+      if (tabs[idx]?.pinned) return;
       cleanupVirtual(idx);
       closeTab(idx);
     },
-    [cleanupVirtual, closeTab],
+    [tabs, cleanupVirtual, closeTab],
   );
 
   const handleCloseAll = useCallback(() => {
-    for (let i = 0; i < tabs.length; i++) cleanupVirtual(i);
+    for (let i = 0; i < tabs.length; i++) {
+      if (!tabs[i]?.pinned) cleanupVirtual(i);
+    }
     closeAllTabs();
   }, [tabs, cleanupVirtual, closeAllTabs]);
 
   const handleCloseOthers = useCallback(
     (idx: number) => {
       for (let i = 0; i < tabs.length; i++) {
-        if (i !== idx) cleanupVirtual(i);
+        if (i !== idx && !tabs[i]?.pinned) cleanupVirtual(i);
       }
       closeOtherTabs(idx);
     },
@@ -90,6 +101,16 @@ export function TabBar() {
               onContextMenu={(e) =>
                 showMenu(e, [
                   {
+                    label: tab.pinned ? "Unpin Tab" : "Pin Tab",
+                    icon: tab.pinned ? (
+                      <PinOff className="h-3 w-3" />
+                    ) : (
+                      <Pin className="h-3 w-3" />
+                    ),
+                    onClick: () => togglePinTab(tab.id),
+                  },
+                  { separator: true as const },
+                  {
                     label: "Close",
                     icon: <X className="h-3 w-3" />,
                     onClick: () => handleCloseTab(idx),
@@ -108,6 +129,16 @@ export function TabBar() {
                     icon: <Trash2 className="h-3 w-3" />,
                     onClick: handleCloseAll,
                   },
+                  ...(tab.type === "query"
+                    ? [
+                        { separator: true as const },
+                        {
+                          label: "Duplicate Tab",
+                          icon: <CopyPlus className="h-3 w-3" />,
+                          onClick: () => duplicateTab(idx),
+                        },
+                      ]
+                    : []),
                   ...(tab.editorValue
                     ? [
                         { separator: true as const },

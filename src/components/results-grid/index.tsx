@@ -21,9 +21,12 @@ import {
   Plus,
   RefreshCw,
   Rows3,
+  Trash2,
+  Undo2,
 } from "lucide-react";
 import {
   type MutableRefObject,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -447,6 +450,11 @@ export function ResultsGrid({
     onPasteRows(parsed);
   }, [onPasteRows]);
 
+  const [selection, setSelection] = useState<GridSelection>({
+    rows: CompactSelection.empty(),
+    columns: CompactSelection.empty(),
+  });
+
   const handleCellContextMenu = useCallback((cell: Item, event: CellClickedEventArgs) => {
     const [colIdx, rowIdx] = cell;
     event.preventDefault();
@@ -470,6 +478,15 @@ export function ResultsGrid({
     const isFK = fkColIndices.has(colIndex);
     const canEditCell = !!isEditing || (isInsertRow && !!editable);
 
+    // Right-clicking inside an existing multi-row selection acts on the whole selection
+    // (copy/export/delete all of it); right-clicking outside it acts on just that row.
+    const isMultiSelected = selection.rows.length > 1 && selection.rows.hasIndex(rowIndex);
+    const selectedRowIndices = isMultiSelected ? [...selection.rows] : [rowIndex];
+    const selectedRowsData = selectedRowIndices
+      .map((i) => rows[i])
+      .filter((r): r is CellValue[] => !!r);
+    const rowCountLabel = isMultiSelected ? `${selectedRowIndices.length} Rows` : "Row";
+
     const items: ContextMenuEntry[] = [
       {
         label: "Copy Cell Value",
@@ -481,20 +498,24 @@ export function ResultsGrid({
     if (row) {
       items.push(
         {
-          label: "Copy Row",
+          label: `Copy ${rowCountLabel}`,
           icon: <Rows3 className="h-3 w-3" />,
           onClick: () =>
-            void navigator.clipboard.writeText(row.map((c) => csvEscape(cellText(c))).join(",")),
+            void navigator.clipboard.writeText(
+              selectedRowsData
+                .map((r) => r.map((c) => csvEscape(cellText(c))).join(","))
+                .join("\n"),
+            ),
         },
         {
-          label: "Copy Row as CSV",
+          label: `Copy ${rowCountLabel} as CSV`,
           icon: <Copy className="h-3 w-3" />,
-          onClick: () => void copyToClipboard("csv", columns, [row]),
+          onClick: () => void copyToClipboard("csv", columns, selectedRowsData),
         },
         {
-          label: "Copy Row as JSON",
+          label: `Copy ${rowCountLabel} as JSON`,
           icon: <Copy className="h-3 w-3" />,
-          onClick: () => void copyToClipboard("json", columns, [row]),
+          onClick: () => void copyToClipboard("json", columns, selectedRowsData),
         },
       );
     }
@@ -536,6 +557,35 @@ export function ResultsGrid({
           onClick: () => onDuplicateRow(rowIndex),
         });
       }
+      if ((onRowDelete || onRowRestore) && row) {
+        const selectedTrueRowIndices = selectedRowIndices.map((i) =>
+          rowIndexMap ? rowIndexMap[i] : i,
+        );
+        const allDeleted = selectedTrueRowIndices.every((t) => deletedRows?.has(t));
+        items.push(
+          allDeleted
+            ? {
+                label: `Restore ${rowCountLabel}`,
+                icon: <Undo2 className="h-3 w-3" />,
+                onClick: () => {
+                  for (const t of selectedTrueRowIndices) onRowRestore?.(t);
+                },
+              }
+            : {
+                label: `Delete ${rowCountLabel}`,
+                icon: <Trash2 className="h-3 w-3" />,
+                destructive: true,
+                // Mirrors the keyboard Delete key: each row toggles independently, so an
+                // already-deleted row inside a mixed selection gets restored, not re-deleted.
+                onClick: () => {
+                  for (const t of selectedTrueRowIndices) {
+                    if (deletedRows?.has(t)) onRowRestore?.(t);
+                    else onRowDelete?.(t);
+                  }
+                },
+              },
+        );
+      }
       if (onPasteRows) {
         items.push({
           label: "Paste",
@@ -553,14 +603,19 @@ export function ResultsGrid({
     }
 
     if (rows.length > 0) {
-      items.push(
-        { separator: true },
-        {
-          label: "Export CSV",
+      items.push({ separator: true });
+      if (isMultiSelected) {
+        items.push({
+          label: `Export ${rowCountLabel} as CSV`,
           icon: <Download className="h-3 w-3" />,
-          onClick: () => void exportResults("csv", columns, rows),
-        },
-      );
+          onClick: () => void exportResults("csv", columns, selectedRowsData),
+        });
+      }
+      items.push({
+        label: "Export CSV",
+        icon: <Download className="h-3 w-3" />,
+        onClick: () => void exportResults("csv", columns, rows),
+      });
     }
 
     return items;
@@ -579,28 +634,60 @@ export function ResultsGrid({
     onRefresh,
     onAddRow,
     onDuplicateRow,
+    onRowDelete,
+    onRowRestore,
     onPasteRows,
     onImport,
     handlePaste,
+    selection,
   ]);
 
   const gridTheme = useMemo((): Partial<Theme> => buildGridTheme(theme), [theme]);
 
-  const [selection, setSelection] = useState<GridSelection>({
-    rows: CompactSelection.empty(),
-    columns: CompactSelection.empty(),
-  });
+  // The row a Shift+click or Shift+Arrow range extends from — set on every plain
+  // or Ctrl/Cmd click so the next Shift interaction has a fixed starting point.
+  const selectionAnchorRef = useRef<number | null>(null);
+  // glide-data-grid's onGridSelectionChange callback carries no event, so we snapshot
+  // Shift/Ctrl/Cmd from the native mousedown (capture phase, ahead of glide's own
+  // internal mousedown handling) and consume it the moment the selection change lands.
+  const clickModifiersRef = useRef({ shift: false, toggle: false });
+  const handleContainerMouseDownCapture = useCallback((event: ReactMouseEvent) => {
+    clickModifiersRef.current = { shift: event.shiftKey, toggle: event.ctrlKey || event.metaKey };
+  }, []);
 
-  // A click anywhere in a row selects the whole row (not just the clicked cell),
-  // so a single click is enough to target a row for keyboard delete.
+  // A click anywhere in a row selects the whole row (not just the clicked cell), so a single
+  // click is enough to target a row for keyboard delete. Shift-click extends a contiguous range
+  // from the last anchor row; Ctrl/Cmd-click toggles individual rows in and out of the selection.
   const handleSelectionChange = useCallback(
     (newSel: GridSelection) => {
       if (!newSel.current) {
+        // No focused cell means glide computed the row selection itself (e.g. Ctrl/Cmd+A) —
+        // trust it as-is instead of collapsing to a single row.
         setSelection(newSel);
+        const rowsArr = newSel.rows.toArray();
+        selectionAnchorRef.current = rowsArr.length > 0 ? rowsArr[0] : null;
         return;
       }
       const rowIdx = newSel.current.cell[1];
-      setSelection({ ...newSel, rows: CompactSelection.fromSingleSelection(rowIdx) });
+      const { shift, toggle } = clickModifiersRef.current;
+      clickModifiersRef.current = { shift: false, toggle: false };
+      setSelection((prev) => {
+        let rows: CompactSelection;
+        if (shift && selectionAnchorRef.current !== null) {
+          const anchor = selectionAnchorRef.current;
+          rows = CompactSelection.fromSingleSelection([
+            Math.min(anchor, rowIdx),
+            Math.max(anchor, rowIdx) + 1,
+          ]);
+        } else if (toggle) {
+          rows = prev.rows.hasIndex(rowIdx) ? prev.rows.remove(rowIdx) : prev.rows.add(rowIdx);
+          selectionAnchorRef.current = rowIdx;
+        } else {
+          rows = CompactSelection.fromSingleSelection(rowIdx);
+          selectionAnchorRef.current = rowIdx;
+        }
+        return { ...newSel, rows };
+      });
       // Feeds the row detail side panel — it always shows whatever row was last
       // clicked/navigated to in the grid, independent of any range selection.
       useUIStore.getState().setSelectedRow(rowIndexMap ? rowIndexMap[rowIdx] : rowIdx);
@@ -654,6 +741,43 @@ export function ResultsGrid({
         return;
       }
 
+      // Shift+Up/Down grows or shrinks the row selection one row at a time from the anchor
+      // row (the last plain/Ctrl-clicked row), mirroring spreadsheet range-select behavior.
+      if (
+        !virtualQuery &&
+        event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+        selection.current
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.cancel();
+        const [curCol, curRow] = selection.current.cell;
+        const anchor = selectionAnchorRef.current ?? curRow;
+        selectionAnchorRef.current = anchor;
+        const nextRow = Math.max(
+          0,
+          Math.min(totalRowCount - 1, curRow + (event.key === "ArrowDown" ? 1 : -1)),
+        );
+        setSelection((prev) => ({
+          ...prev,
+          current: {
+            cell: [curCol, nextRow],
+            range: { x: curCol, y: nextRow, width: 1, height: 1 },
+            rangeStack: prev.current?.rangeStack ?? [],
+          },
+          rows: CompactSelection.fromSingleSelection([
+            Math.min(anchor, nextRow),
+            Math.max(anchor, nextRow) + 1,
+          ]),
+        }));
+        dataEditorRef.current?.scrollTo(curCol, nextRow, "vertical");
+        useUIStore.getState().setSelectedRow(rowIndexMap ? rowIndexMap[nextRow] : nextRow);
+        return;
+      }
+
       if (virtualQuery || selection.rows.length === 0) return;
       if (event.key !== "Delete" && event.key !== "Backspace") return;
       event.preventDefault();
@@ -677,11 +801,16 @@ export function ResultsGrid({
       onUndo,
       rowIndexMap,
       getCellContent,
+      totalRowCount,
     ],
   );
 
   return (
-    <div ref={containerRef} className="results-grid-scroll flex-1 min-h-0 overflow-hidden">
+    <div
+      ref={containerRef}
+      className="results-grid-scroll flex-1 min-h-0 overflow-hidden"
+      onMouseDownCapture={handleContainerMouseDownCapture}
+    >
       <DataEditor
         ref={dataEditorRef}
         columns={gridColumns}

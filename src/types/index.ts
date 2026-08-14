@@ -50,6 +50,7 @@ export interface Tab {
   projectId?: string;
   schema?: string;
   title: string;
+  pinned?: boolean;
   /** Set on a "query" tab that's actually the New Table column editor for this schema,
    *  instead of the normal SQL editor + results — reuses the query tab/pane rather than
    *  introducing a separate tab type. */

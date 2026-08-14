@@ -125,7 +125,7 @@ export function DatabaseTree({ projectId }: { projectId: string }) {
     objectType: "table" | "view" | "matview" = "table",
   ) => {
     const sql = `SELECT * FROM "${schema}"."${table}" LIMIT 100;`;
-    openTab(projectId, sql);
+    openTab(projectId, sql, table);
     const tabs = useTabStore.getState().tabs;
     const newTabId = tabs[tabs.length - 1]?.id;
     if (!newTabId) return;
